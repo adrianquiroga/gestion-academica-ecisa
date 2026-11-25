@@ -32,6 +32,7 @@ CATEGORIAS_APORTE = _doc_svc.CATEGORIAS_APORTE
 ESTADOS_DOCENTE = _doc_svc.ESTADOS_DOCENTE
 NIVELES_INGLES = _doc_svc.NIVELES_INGLES
 etiqueta_estado_docente = _doc_svc.etiqueta_estado_docente
+etiqueta_vigencia_contrato = _doc_svc.etiqueta_vigencia_contrato
 limpiar_cache_docentes = _doc_svc.limpiar_cache_docentes
 listar_docentes_con_relaciones = _doc_svc.listar_docentes_con_relaciones
 obtener_estadisticas_consolidadas = _doc_svc.obtener_estadisticas_consolidadas
@@ -69,23 +70,65 @@ if not ok_db:
     st.error(f"⚠️ Base de datos no configurada: {msg_db}")
     st.stop()
 
-stats = obtener_estadisticas_consolidadas()
+# =============================================================================
+# 0. SELECTOR DE CRITERIO ESTADÍSTICO HÍBRIDO (ESTADO 'A'/'R' + FECHA TERMINA + PERIODO)
+# =============================================================================
+stats_base = obtener_estadisticas_consolidadas(modo_criterio="estado_activo", filtro_periodo="Todos")
+
+with st.container(border=True):
+    c_crit, c_per_stat = st.columns([2.6, 1.2])
+    with c_crit:
+        opciones_modo_stats = {
+            "estado_activo": "🟢 Por Estado Activo ('A') — Recomendado (excluye Retirados 'R', mantiene datos en interperiodos)",
+            "vigentes_fecha_termina": "📅 Por Contrato Vigente Hoy (Estado 'A' y FECHA TERMINA >= Hoy — sin cambiar estado manual al cierre)",
+            "todos_registrados": "📚 Histórico Completo (Todos los docentes registrados: Activos 'A' y Retirados 'R')",
+        }
+        modo_criterio_sel = st.radio(
+            "📐 Criterio para calcular Estadísticas, Gráficas e Informe PDF:",
+            options=list(opciones_modo_stats.keys()),
+            format_func=lambda k: opciones_modo_stats[k],
+            horizontal=False,
+        )
+    with c_per_stat:
+        periodos_disp = ["Todos"] + (stats_base.get("periodos_disponibles") or [])
+        periodo_stats_sel = st.selectbox(
+            "🗓️ Periodo Académico en Estadísticas:",
+            options=periodos_disp,
+            index=0,
+            help="Filtra las estadísticas superiores por un periodo académico específico o consúltalas todas.",
+        )
+        st.caption(
+            f"📊 **Resumen planta total:** `{stats_base.get('total_docentes_registrados', 0)}` registrados | "
+            f"`{stats_base.get('total_docentes_vigentes_hoy', 0)}` con `FECHA TERMINA` vigente hoy | "
+            f"`{stats_base.get('total_docentes_retirados', 0)}` retirados (`R`)."
+        )
+
+stats = obtener_estadisticas_consolidadas(
+    modo_criterio=modo_criterio_sel,
+    filtro_periodo=periodo_stats_sel,
+)
 
 # =============================================================================
 # 1. MÉTRICAS CLAVE (KPIs) Y ACCESO A CARPETA DE DRIVE
 # =============================================================================
 k1, k2, k3, k4, k5 = st.columns(5)
 retirados_cnt = int(stats.get("total_docentes_retirados", 0))
-delta_ret = f"{retirados_cnt} retirado(s) 'R' excluidos" if retirados_cnt > 0 else "Solo docentes Activos ('A')"
-k1.metric("👨‍🏫 Docentes Activos ('A')", stats["total_docentes"], delta=delta_ret, delta_color="off")
+vencidos_cnt = int(stats.get("total_docentes_fecha_vencida", 0))
+if modo_criterio_sel == "vigentes_fecha_termina":
+    etiqueta_k1 = "👨‍🏫 Docentes Vigentes Hoy"
+    delta_ret = f"{vencidos_cnt} vencido(s) / {retirados_cnt} 'R' excluidos"
+elif modo_criterio_sel == "todos_registrados":
+    etiqueta_k1 = "👨‍🏫 Total Histórico Docentes"
+    delta_ret = "Incluye Activos y Retirados"
+else:
+    etiqueta_k1 = "👨‍🏫 Docentes Activos ('A')"
+    delta_ret = f"{retirados_cnt} retirado(s) 'R' excluidos" if retirados_cnt > 0 else "Solo docentes Activos ('A')"
+
+k1.metric(etiqueta_k1, stats["total_docentes"], delta=delta_ret, delta_color="off")
 k2.metric("⏱️ Total Horas Vinculación", f"{stats['total_horas_vinculacion']:,}".replace(",", "."))
 k3.metric("🎓 Títulos de Posgrado", stats["total_posgrados"])
 k4.metric("🌐 Con Soporte Inglés (Drive)", stats["docentes_con_soporte_ingles"])
 k5.metric("🚀 Total Aportes", stats["total_aportes"])
-st.caption(
-    "ℹ️ **Nota estadística:** Todos los indicadores y gráficas contabilizan exclusivamente a los docentes en estado **Activo (`A`)**. "
-    "Los docentes en estado **Retirado (`R`)** se excluyen automáticamente de las estadísticas y pueden reactivarse cuando vuelvan a ser contratados."
-)
 
 if usuario_es_admin:
     c_dr1, c_dr2 = st.columns(2)
@@ -180,14 +223,17 @@ f0, f1, f2, f3, f4, f5 = st.columns([1.05, 1, 1.15, 1.15, 0.95, 1])
 
 with f0:
     opciones_filtro_estado = {
-        "A": "Activos (A)",
-        "R": "Retirados (R)",
-        "Todos": "Todos (A y R)",
+        "A": "Activos ('A')",
+        "VIGENTES": "Vigentes Hoy ('A' + FECHA TERMINA >= Hoy)",
+        "VENCIDOS": "Contrato Vencido (FECHA TERMINA < Hoy)",
+        "R": "Retirados ('R')",
+        "Todos": "Todos ('A' y 'R')",
     }
+    idx_def_est = 1 if modo_criterio_sel == "vigentes_fecha_termina" else (4 if modo_criterio_sel == "todos_registrados" else 0)
     filtro_estado = st.selectbox(
-        "Estado Docente (`estado`)",
+        "Estado / Vigencia (`estado` / `FECHA TERMINA`)",
         options=list(opciones_filtro_estado.keys()),
-        index=0,
+        index=idx_def_est,
         format_func=lambda k: opciones_filtro_estado[k],
     )
 
@@ -232,6 +278,7 @@ docentes_filtrados = listar_docentes_con_relaciones(
     filtro_centro=filtro_centro,
     filtro_programa=filtro_programa,
     filtro_estado=filtro_estado,
+    filtro_periodo=periodo_stats_sel,
     busqueda_texto=busqueda_txt,
     limite=150,
 )
@@ -271,6 +318,8 @@ else:
                 "Documento": d.get("documento", ""),
                 "Nombre Completo": d.get("nombre_completo", ""),
                 "Estado": etiqueta_estado_docente(d.get("estado", "A")),
+                "Vigencia (FECHA TERMINA)": d.get("vigencia_contrato") or etiqueta_vigencia_contrato(d),
+                "Periodo": d.get("periodo_academico") or "-",
                 "Formación": d.get("nivel_formacion_maximo") or "-",
                 "Nivel Inglés": d.get("nivel_ingles", "Sin certificar"),
                 "Certificado Inglés": d.get("soporte_ingles_url") or "",

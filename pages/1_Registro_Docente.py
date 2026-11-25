@@ -44,10 +44,12 @@ RUTA_EXCEL_INGLES_RESPUESTAS_DEFECTO = _doc_svc.RUTA_EXCEL_INGLES_RESPUESTAS_DEF
 RUTA_EXCEL_RESOLUCIONES_DEFECTO = _doc_svc.RUTA_EXCEL_RESOLUCIONES_DEFECTO
 agregar_aporte_docente = _doc_svc.agregar_aporte_docente
 agregar_estudio_docente = _doc_svc.agregar_estudio_docente
+actualizar_estados_por_fecha_termina = _doc_svc.actualizar_estados_por_fecha_termina
 buscar_docente = _doc_svc.buscar_docente
 eliminar_aporte_docente = _doc_svc.eliminar_aporte_docente
 eliminar_estudio_docente = _doc_svc.eliminar_estudio_docente
 etiqueta_estado_docente = _doc_svc.etiqueta_estado_docente
+etiqueta_vigencia_contrato = _doc_svc.etiqueta_vigencia_contrato
 guardar_o_actualizar_docente = _doc_svc.guardar_o_actualizar_docente
 importar_resoluciones_excel_a_supabase = _doc_svc.importar_resoluciones_excel_a_supabase
 importar_respuestas_ingles_a_supabase = _doc_svc.importar_respuestas_ingles_a_supabase
@@ -137,8 +139,14 @@ if usuario_es_admin:
             Esta herramienta procesa las **32 columnas** de `Resoluciones Docentes.xlsx`:
             * Normaliza el **Nivel de Inglés** al estándar MCER (`A1`..`C2`, `En caracterización / Prueba`, `Sin certificar`) conservando el texto original.
             * Carga los datos de **Resolución, Periodo, Modalidad, Horas, Salario, Total Vinculación, Escuela, Centro (CEAD/CCAV/UDR) y Programa**.
+            * **Gestión inteligente de Estado (`A` / `R`) y `FECHA TERMINA`:** Los docentes incluidos en el nuevo Excel quedan activos (`A`), y opcionalmente los de periodos anteriores con `FECHA TERMINA` vencida que no estén en el archivo pasan automáticamente a Retirados (`R`).
             * Desglosa automáticamente los títulos de las columnas **`PROFESIONAL`**, **`ESPECIALIZACIÓN`**, **`MAESTRÍA`** y **`DOCTORADO`** en la tabla `docente_estudios` sin duplicar registros.
             """
+        )
+
+        chk_retirar_vencidos = st.checkbox(
+            "🔄 Marcar automáticamente como Retirado ('R') a docentes de periodos anteriores con `FECHA TERMINA` vencida que no aparezcan en el nuevo Excel",
+            value=True,
         )
 
         col_imp_local, col_imp_upload = st.columns(2)
@@ -159,6 +167,7 @@ if usuario_es_admin:
                         ok_imp, n_doc, n_est, msg_imp = importar_resoluciones_excel_a_supabase(
                             fuente_excel=None,
                             sincronizar_estudios=True,
+                            retirar_no_incluidos_vencidos=chk_retirar_vencidos,
                         )
                     if ok_imp:
                         st.success(f"✅ {msg_imp}")
@@ -179,11 +188,30 @@ if usuario_es_admin:
                         ok_imp, n_doc, n_est, msg_imp = importar_resoluciones_excel_a_supabase(
                             fuente_excel=excel_subido,
                             sincronizar_estudios=True,
+                            retirar_no_incluidos_vencidos=chk_retirar_vencidos,
                         )
                     if ok_imp:
                         st.success(f"✅ {msg_imp}")
                     else:
                         st.error(f"❌ {msg_imp}")
+
+        st.divider()
+        st.markdown("##### 📅 Cierre Rápido de Periodo según `FECHA TERMINA` (Sin editar uno por uno)")
+        c_f_info, c_f_btn = st.columns([2.4, 1.2])
+        with c_f_info:
+            st.caption(
+                "Si terminó el periodo académico y deseas actualizar con un solo clic el campo `estado` a **Retirado (`R`)** "
+                "para todos los docentes cuya **`FECHA TERMINA`** ya venció al día de hoy (sin cambiar uno por uno), usa este botón. "
+                "Cuando subas las resoluciones del siguiente periodo, los recontratados volverán automáticamente a **Activo (`A`)**."
+            )
+        with c_f_btn:
+            if st.button("🗓️ Actualizar Estados por `FECHA TERMINA` Hoy", use_container_width=True):
+                with st.spinner("Verificando FECHA TERMINA de todos los docentes..."):
+                    ok_ft, n_ret, n_act, msg_ft = actualizar_estados_por_fecha_termina()
+                if ok_ft:
+                    st.success(f"✅ {msg_ft}")
+                else:
+                    st.error(f"❌ {msg_ft}")
 
         st.divider()
         st.markdown("##### 🌐 Sincronizar Encuesta `Evaluacion de Nivel de Ingles para Docentes (respuestas).xlsx`")

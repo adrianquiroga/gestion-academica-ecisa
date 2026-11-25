@@ -359,6 +359,9 @@ def generar_pdf_informe_consolidado(
 
     total_docentes = max(int(stats.get("total_docentes", 0)), 0)
     total_retirados = int(stats.get("total_docentes_retirados", 0))
+    total_vencidos = int(stats.get("total_docentes_fecha_vencida", 0))
+    modo_crit = stats.get("modo_criterio", "estado_activo")
+    filtro_per = stats.get("filtro_periodo", "Todos")
     total_estudios = int(stats.get("total_estudios", 0))
     total_posgrados = int(stats.get("total_posgrados", 0))
     total_aportes = int(stats.get("total_aportes", 0))
@@ -366,12 +369,23 @@ def generar_pdf_informe_consolidado(
     total_horas = int(stats.get("total_horas_vinculacion", 0))
     suma_vinculacion = float(stats.get("suma_total_vinculacion", 0.0))
 
+    if modo_crit == "vigentes_fecha_termina":
+        desc_criterio = f"Vigentes Hoy (Estado 'A' y FECHA TERMINA >= Hoy | Periodo: {filtro_per})"
+    elif modo_crit == "todos_registrados":
+        desc_criterio = f"Historico Completo (Activos 'A' y Retirados 'R' | Periodo: {filtro_per})"
+    else:
+        desc_criterio = f"Estado Activo ('A') - Excluye Retirados 'R' (Periodo: {filtro_per})"
+
     # 1. Indicadores Clave
-    pdf.seccion_titulo("1. Indicadores Clave del Cuerpo Docente Activo (Excluye Retirados 'R')")
+    pdf.seccion_titulo("1. Indicadores Clave del Cuerpo Docente (Criterio Hibrido Estado / Vigencia)")
     pdf.set_text_color(30, 41, 59)
 
     kpis = [
-        ("Total de Docentes Activos ('A'):", f"{total_docentes} (Excluidos en estado Retirado 'R': {total_retirados})"),
+        ("Criterio Estadistico Aplicado:", desc_criterio),
+        (
+            "Docentes Contabilizados en Informe:",
+            f"{total_docentes} (Retirados 'R': {total_retirados} | Con FECHA TERMINA vencida: {total_vencidos})",
+        ),
         ("Total Horas Contratadas en Resoluciones:", f"{total_horas:,}".replace(",", ".")),
         ("Valor Total Consolidado de Vinculacion:", _formatear_moneda(suma_vinculacion)),
         ("Docentes con Certificado de Ingles en Drive:", f"{con_soporte_ing} de {total_docentes}"),

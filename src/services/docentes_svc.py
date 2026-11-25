@@ -8,6 +8,7 @@ incluyendo:
 - CRUD completo de docentes, estudios y aportes con caché `@st.cache_data(ttl=300)`.
 """
 
+from datetime import date, datetime
 import json
 import re
 from pathlib import Path
@@ -138,6 +139,92 @@ def obtener_estado_efectivo_docente(docente: Optional[Dict[str, Any]]) -> str:
         if doc_str in mapa_local:
             return normalizar_estado_docente(mapa_local[doc_str])
     return "A"
+
+
+def tiene_contrato_vigente(docente: Optional[Dict[str, Any]], fecha_ref: Optional[date] = None) -> bool:
+    """
+    Evalúa si la resolución del docente está vigente comparando `fecha_termina` con `fecha_ref` (por defecto hoy).
+    Si el docente no tiene `fecha_termina` registrada, se asume vigente mientras su `estado` sea Activo ('A').
+    """
+    if not docente:
+        return False
+    f_term_raw = docente.get("fecha_termina")
+    if not f_term_raw:
+        return True
+    try:
+        dt_term = pd.to_datetime(str(f_term_raw)[:10], errors="coerce")
+        if pd.isna(dt_term):
+            return True
+        ref = fecha_ref or date.today()
+        return dt_term.date() >= ref
+    except Exception:
+        return True
+
+
+def etiqueta_vigencia_contrato(docente: Optional[Dict[str, Any]], fecha_ref: Optional[date] = None) -> str:
+    """
+    Retorna una etiqueta clara de la vigencia según `fecha_termina`, por ejemplo:
+    - 'Vigente (hasta 2026-12-16)'
+    - 'Vencido (2026-07-12)'
+    - 'Sin fecha fin'
+    """
+    if not docente:
+        return "Sin fecha fin"
+    f_term_raw = docente.get("fecha_termina")
+    if not f_term_raw:
+        return "Sin fecha fin"
+    f_str = str(f_term_raw)[:10]
+    if tiene_contrato_vigente(docente, fecha_ref=fecha_ref):
+        return f"Vigente ({f_str})"
+    return f"Vencido ({f_str})"
+
+
+def actualizar_estados_por_fecha_termina(fecha_corte: Optional[date] = None) -> Tuple[bool, int, int, str]:
+    """
+    Sincroniza automáticamente el campo `estado` de todos los docentes según su `fecha_termina` frente a `fecha_corte` (por defecto hoy):
+    - Si `fecha_termina < fecha_corte` y estaba en `'A'`, pasa automáticamente a `'R'` (Retirado).
+    - Retorna `(exito, pasados_a_retirado, siguen_activos, mensaje)`.
+    """
+    client = get_supabase_client()
+    if client is None:
+        return False, 0, 0, "Cliente de Supabase no configurado."
+
+    corte = fecha_corte or date.today()
+    try:
+        res = client.table("docentes").select("*").execute()
+        docentes = res.data or []
+        pasados_a_r = 0
+        activos_count = 0
+
+        for d in docentes:
+            doc_id = d.get("id")
+            doc_num = str(d.get("documento") or "").strip()
+            est_actual = obtener_estado_efectivo_docente(d)
+            vigente = tiene_contrato_vigente(d, fecha_ref=corte)
+
+            if not vigente and d.get("fecha_termina"):
+                if est_actual != "R":
+                    try:
+                        client.table("docentes").update({"estado": "R"}).eq("id", doc_id).execute()
+                    except Exception:
+                        pass
+                    if doc_num:
+                        _guardar_estado_local(doc_num, "R")
+                    pasados_a_r += 1
+            else:
+                if est_actual == "A":
+                    activos_count += 1
+
+        limpiar_cache_docentes()
+        return (
+            True,
+            pasados_a_r,
+            activos_count,
+            f"Corte al {corte.isoformat()}: {pasados_a_r} docente(s) con FECHA TERMINA vencida pasaron automáticamente a Retirado ('R'). "
+            f"Quedan {activos_count} docente(s) en estado Activo ('A').",
+        )
+    except Exception as exc:
+        return False, 0, 0, f"Error al sincronizar estados por fecha de terminación: {exc}"
 
 
 def limpiar_cache_docentes() -> None:
@@ -406,11 +493,14 @@ def procesar_dataframe_resoluciones(df: pd.DataFrame) -> Tuple[List[Dict[str, An
 def importar_resoluciones_excel_a_supabase(
     fuente_excel: Any = None,
     sincronizar_estudios: bool = True,
+    retirar_no_incluidos_vencidos: bool = True,
 ) -> Tuple[bool, int, int, str]:
     """
     Lee `Resoluciones Docentes.xlsx` (desde el archivo local en la raíz del proyecto o desde un archivo subido),
-    realiza `upsert` por lotes en `public.docentes` y opcionalmente sincroniza los títulos desglosados
-    en `public.docente_estudios` evitando duplicados.
+    realiza `upsert` por lotes en `public.docentes` (reactivando a `'A'` a los docentes contratados en el Excel)
+    y, si `retirar_no_incluidos_vencidos=True`, marca automáticamente como Retirado (`'R'`) a los docentes
+    de periodos anteriores que no estén en este archivo y cuya `fecha_termina` ya haya vencido.
+    Además sincroniza los títulos desglosados en `public.docente_estudios` evitando duplicados.
 
     Retorna: `(exito, docentes_procesados, estudios_creados, mensaje)`
     """
@@ -457,6 +547,23 @@ def importar_resoluciones_excel_a_supabase(
             _guardar_estado_local(d_item["documento"], d_item.get("estado", "A"))
         docentes_guardados = res_upsert.data or []
         total_docentes = len(docentes_guardados)
+
+        retirados_auto = 0
+        if retirar_no_incluidos_vencidos:
+            docs_en_excel = {str(d_item["documento"]).strip() for d_item in lista_docentes if d_item.get("documento")}
+            res_todos = client.table("docentes").select("id, documento, fecha_termina, estado").execute()
+            for d_bd in (res_todos.data or []):
+                doc_bd_str = str(d_bd.get("documento") or "").strip()
+                if doc_bd_str and doc_bd_str not in docs_en_excel:
+                    if not tiene_contrato_vigente(d_bd):
+                        est_act = obtener_estado_efectivo_docente(d_bd)
+                        if est_act != "R":
+                            try:
+                                client.table("docentes").update({"estado": "R"}).eq("id", d_bd["id"]).execute()
+                            except Exception:
+                                pass
+                            _guardar_estado_local(doc_bd_str, "R")
+                            retirados_auto += 1
 
         total_estudios_nuevos = 0
         if sincronizar_estudios and docentes_guardados:
@@ -508,11 +615,16 @@ def importar_resoluciones_excel_a_supabase(
                 total_estudios_nuevos = len(nuevos_estudios_lote)
 
         limpiar_cache_docentes()
+        extra_ret = (
+            f" ({retirados_auto} docente(s) de periodos anteriores con fecha vencida pasaron automáticamente a Retirado 'R')."
+            if retirados_auto > 0
+            else "."
+        )
         return (
             True,
             total_docentes,
             total_estudios_nuevos,
-            f"Importación exitosa: {total_docentes} docentes sincronizados y {total_estudios_nuevos} títulos académicos desglosados.",
+            f"Importación exitosa: {total_docentes} docentes sincronizados (en estado Activo 'A') y {total_estudios_nuevos} títulos académicos desglosados{extra_ret}",
         )
     except Exception as exc:
         return (
@@ -954,15 +1066,17 @@ def listar_docentes_con_relaciones(
     filtro_centro: Optional[str] = None,
     filtro_programa: Optional[str] = None,
     filtro_estado: Optional[str] = "A",
+    filtro_periodo: Optional[str] = None,
+    solo_contrato_vigente: bool = False,
     busqueda_texto: Optional[str] = None,
     limite: int = 150,
 ) -> List[Dict[str, Any]]:
     """
     Consulta docentes junto con sus estudios, aportes y datos de resolución.
-    Permite filtrar por `estado`:
-    - `'A'` o `'Activo (A)'`: Solo docentes Activos (valor por defecto para reportes).
-    - `'R'` o `'Retirado (R)'`: Solo docentes Retirados.
-    - `'Todos'` o `None`: Todos los docentes.
+    Permite filtrar por:
+    - `filtro_estado`: `'A'`, `'R'`, `'VIGENTES'` (Activos 'A' con `FECHA TERMINA >= Hoy`), `'VENCIDOS'` (`FECHA TERMINA < Hoy`), o `'Todos'`.
+    - `filtro_periodo`: Periodo académico (ej. `'2201'`) o `'Todos'`.
+    - `solo_contrato_vigente`: Si es True, exige además que `FECHA TERMINA >= Hoy`.
     """
     client = get_supabase_client()
     if client is None:
@@ -988,6 +1102,9 @@ def listar_docentes_con_relaciones(
         if filtro_programa and filtro_programa != "Todos":
             query = query.eq("programa_descripcion", filtro_programa)
 
+        if filtro_periodo and filtro_periodo not in {"Todos", "Todas"}:
+            query = query.eq("periodo_academico", str(filtro_periodo).strip())
+
         if busqueda_texto and busqueda_texto.strip():
             term = busqueda_texto.strip()
             query = query.or_(
@@ -999,10 +1116,25 @@ def listar_docentes_con_relaciones(
 
         for d in docentes:
             d["estado"] = obtener_estado_efectivo_docente(d)
+            d["vigencia_contrato"] = etiqueta_vigencia_contrato(d)
 
         if filtro_estado and filtro_estado not in {"Todos", "Todas"}:
-            cod_filtro = normalizar_estado_docente(filtro_estado)
-            docentes = [d for d in docentes if d.get("estado", "A") == cod_filtro]
+            if filtro_estado == "VIGENTES":
+                docentes = [
+                    d for d in docentes
+                    if d.get("estado", "A") == "A" and tiene_contrato_vigente(d)
+                ]
+            elif filtro_estado == "VENCIDOS":
+                docentes = [
+                    d for d in docentes
+                    if not tiene_contrato_vigente(d)
+                ]
+            else:
+                cod_filtro = normalizar_estado_docente(filtro_estado)
+                docentes = [d for d in docentes if d.get("estado", "A") == cod_filtro]
+
+        if solo_contrato_vigente:
+            docentes = [d for d in docentes if tiene_contrato_vigente(d)]
 
         if filtro_categoria_aporte and filtro_categoria_aporte != "Todas":
             docentes = [
@@ -1020,16 +1152,29 @@ def listar_docentes_con_relaciones(
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
+def obtener_estadisticas_consolidadas(
+    modo_criterio: str = "estado_activo",
+    filtro_periodo: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Calcula las métricas gerenciales consolidadas incluyendo la información de resoluciones.
-    IMPORTANTE: Excluye automáticamente de todas las estadísticas a los docentes cuyo
-    campo `estado` sea Retirado ('R'), contabilizando únicamente a los docentes Activos ('A').
+    Calcula las métricas gerenciales consolidadas combinando lo mejor de `estado` ('A'/'R'),
+    `fecha_termina` (FECHA TERMINA) y `periodo_academico`:
+    - `modo_criterio`:
+      * `'estado_activo'` (Por defecto - Recomendado): Incluye docentes con `estado == 'A'` (excluye Retirados `'R'`).
+        Mantiene las estadísticas disponibles incluso en interperiodos cuando `FECHA TERMINA` acaba de vencer.
+      * `'vigentes_fecha_termina'`: Incluye docentes con `estado == 'A'` Y `fecha_termina >= Hoy`.
+        Excluye automáticamente a quienes ya cumplieron su `FECHA TERMINA` sin tener que cambiarles el `estado` uno por uno.
+      * `'todos_registrados'`: Incluye toda la base histórica (Activos y Retirados).
+    - `filtro_periodo`: Si se especifica un periodo (ej. `'2201'`), calcula las estadísticas para ese periodo.
     """
     client = get_supabase_client()
     stats: Dict[str, Any] = {
+        "modo_criterio": modo_criterio,
+        "filtro_periodo": filtro_periodo or "Todos",
         "total_docentes": 0,
         "total_docentes_retirados": 0,
+        "total_docentes_fecha_vencida": 0,
+        "total_docentes_vigentes_hoy": 0,
         "total_docentes_registrados": 0,
         "total_estudios": 0,
         "total_posgrados": 0,
@@ -1047,6 +1192,7 @@ def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
         "centros_disponibles": [],
         "programas_disponibles": [],
         "modalidades_disponibles": [],
+        "periodos_disponibles": [],
     }
 
     if client is None:
@@ -1061,26 +1207,64 @@ def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
         todos_docentes = res_doc.data or []
         stats["total_docentes_registrados"] = len(todos_docentes)
 
-        docentes_activos: List[Dict[str, Any]] = []
-        ids_activos = set()
-
-        for d in todos_docentes:
-            est_doc = obtener_estado_efectivo_docente(d)
-            d["estado"] = est_doc
-            if est_doc == "R":
-                stats["total_docentes_retirados"] += 1
-            else:
-                docentes_activos.append(d)
-                if d.get("id"):
-                    ids_activos.add(d["id"])
-
-        stats["total_docentes"] = len(docentes_activos)
-
         centros_set = set()
         programas_set = set()
         modalidades_set = set()
+        periodos_set = set()
 
-        for d in docentes_activos:
+        for d in todos_docentes:
+            if d.get("centro_descripcion"):
+                centros_set.add(d["centro_descripcion"])
+            if d.get("programa_descripcion"):
+                programas_set.add(d["programa_descripcion"])
+            if d.get("modalidad"):
+                modalidades_set.add(d["modalidad"])
+            if d.get("periodo_academico"):
+                periodos_set.add(str(d["periodo_academico"]).strip())
+
+        stats["centros_disponibles"] = sorted(centros_set)
+        stats["programas_disponibles"] = sorted(programas_set)
+        stats["modalidades_disponibles"] = sorted(modalidades_set)
+        stats["periodos_disponibles"] = sorted(periodos_set, reverse=True)
+
+        docentes_incluidos: List[Dict[str, Any]] = []
+        ids_incluidos = set()
+        hoy = date.today()
+
+        for d in todos_docentes:
+            est_doc = obtener_estado_efectivo_docente(d)
+            es_vigente = tiene_contrato_vigente(d, fecha_ref=hoy)
+            d["estado"] = est_doc
+
+            if est_doc == "R":
+                stats["total_docentes_retirados"] += 1
+            if not es_vigente:
+                stats["total_docentes_fecha_vencida"] += 1
+            if est_doc == "A" and es_vigente:
+                stats["total_docentes_vigentes_hoy"] += 1
+
+            # Filtrar por periodo si se seleccionó uno específico
+            if filtro_periodo and filtro_periodo not in {"Todos", "Todas"}:
+                if str(d.get("periodo_academico") or "").strip() != str(filtro_periodo).strip():
+                    continue
+
+            # Aplicar criterio híbrido seleccionado
+            incluir = False
+            if modo_criterio == "vigentes_fecha_termina":
+                incluir = (est_doc == "A") and es_vigente
+            elif modo_criterio == "todos_registrados":
+                incluir = True
+            else:  # 'estado_activo' por defecto
+                incluir = (est_doc == "A")
+
+            if incluir:
+                docentes_incluidos.append(d)
+                if d.get("id"):
+                    ids_incluidos.add(d["id"])
+
+        stats["total_docentes"] = len(docentes_incluidos)
+
+        for d in docentes_incluidos:
             niv = d.get("nivel_ingles") or "Sin certificar"
             stats["distribucion_ingles"][niv] = stats["distribucion_ingles"].get(niv, 0) + 1
             if d.get("soporte_ingles_url"):
@@ -1093,36 +1277,17 @@ def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
 
             mod = d.get("modalidad") or "Sin especificar"
             stats["distribucion_modalidad"][mod] = stats["distribucion_modalidad"].get(mod, 0) + 1
-            if d.get("modalidad"):
-                modalidades_set.add(d["modalidad"])
 
             centro = d.get("centro_descripcion") or "Sin especificar"
             stats["distribucion_centro"][centro] = stats["distribucion_centro"].get(centro, 0) + 1
-            if d.get("centro_descripcion"):
-                centros_set.add(d["centro_descripcion"])
 
             prog = d.get("programa_descripcion") or "Sin especificar"
             stats["distribucion_programa"][prog] = stats["distribucion_programa"].get(prog, 0) + 1
-            if d.get("programa_descripcion"):
-                programas_set.add(d["programa_descripcion"])
 
             if d.get("horas_vinculacion"):
                 stats["total_horas_vinculacion"] += int(d["horas_vinculacion"])
             if d.get("total_vinculacion"):
                 stats["suma_total_vinculacion"] += float(d["total_vinculacion"])
-
-        # Incluir todos los centros, programas y modalidades conocidos para los filtros del directorio
-        for d in todos_docentes:
-            if d.get("centro_descripcion"):
-                centros_set.add(d["centro_descripcion"])
-            if d.get("programa_descripcion"):
-                programas_set.add(d["programa_descripcion"])
-            if d.get("modalidad"):
-                modalidades_set.add(d["modalidad"])
-
-        stats["centros_disponibles"] = sorted(centros_set)
-        stats["programas_disponibles"] = sorted(programas_set)
-        stats["modalidades_disponibles"] = sorted(modalidades_set)
 
         res_est = (
             client.table("docente_estudios")
@@ -1131,7 +1296,7 @@ def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
         )
         estudios = [
             e for e in (res_est.data or [])
-            if e.get("docente_id") in ids_activos
+            if e.get("docente_id") in ids_incluidos
         ]
         stats["total_estudios"] = len(estudios)
         for e in estudios:
@@ -1147,7 +1312,7 @@ def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
         )
         aportes = [
             a for a in (res_apo.data or [])
-            if a.get("docente_id") in ids_activos
+            if a.get("docente_id") in ids_incluidos
         ]
         stats["total_aportes"] = len(aportes)
         for a in aportes:
