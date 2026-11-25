@@ -406,55 +406,108 @@ def _limpiar_texto(valor: Any) -> Optional[str]:
     return txt if txt and txt.lower() not in {"nan", "none"} else None
 
 
-def procesar_dataframe_resoluciones(df: pd.DataFrame) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+def _normalizar_columnas_df_resoluciones(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Transforma el DataFrame leído de `Resoluciones Docentes.xlsx` en:
+    Normaliza los encabezados del DataFrame de Resoluciones Docentes:
+    - Elimina espacios sobrantes al inicio/final y saltos de línea.
+    - Soporta tanto el formato estándar de 24 columnas de nuevos periodos:
+      `#`, `PERIODO ACADEMICO`, `ESTADO ACEPTACION`, `DOCUMENTO`, `NOMBRES`, `MODALIDAD`,
+      `NIVEL FORMACION`, `HORAS`, `ESCUELA CODIGO`, `ESCUELA DESCRIPCION`, `CENTRO DESCRIPCION`,
+      `ZONA DESCRIPCION`, `FECHA INICIO`, `FECHA TERMINA`, `RESOLUCION NUMERO`, `RESOLUCION FECHA`,
+      `SALARIO MENSUAL`, `TOTAL VINCULACION`, `PROGRAMA CODIGO`, `PROGRAMA DESCRIPCION`,
+      `DOFE`, `NUEVO`, `ULTIMA VINCULACION`, `EMAIL PERSONAL`
+      como el formato extendido de 32 columnas (que incluye `Nivel de Inglés`, `PROFESIONAL`,
+      `ESPECIALIZACIÓN`, `MAESTRÍA`, `DOCTORADO`, `Telefono`, `Correos Institucionales`, `CUMPLEAÑOS`).
+    """
+    df_copy = df.copy()
+    nuevas_cols = []
+    for col in df_copy.columns:
+        c_str = re.sub(r"\s+", " ", str(col)).strip()
+        c_up = c_str.upper()
+        if c_up in {"ESPECIALIZACION", "ESPECIALIZACIÓN"}:
+            nuevas_cols.append("ESPECIALIZACIÓN")
+        elif c_up in {"MAESTRIA", "MAESTRÍA"}:
+            nuevas_cols.append("MAESTRÍA")
+        elif c_up in {"NIVEL DE INGLES", "NIVEL DE INGLÉS"}:
+            nuevas_cols.append("Nivel de Inglés")
+        elif c_up == "CORREOS INSTITUCIONALES":
+            nuevas_cols.append("Correos Institucionales")
+        elif c_up in {"TELEFONO", "TELÉFONO"}:
+            nuevas_cols.append("Telefono")
+        elif "CUMPLEA" in c_up:
+            nuevas_cols.append("CUMPLEAÑOS (MES Y DIA no año)")
+        else:
+            nuevas_cols.append(c_up if c_up in {
+                "#", "PERIODO ACADEMICO", "ESTADO ACEPTACION", "DOCUMENTO", "NOMBRES",
+                "MODALIDAD", "NIVEL FORMACION", "HORAS", "ESCUELA CODIGO", "ESCUELA DESCRIPCION",
+                "CENTRO DESCRIPCION", "ZONA DESCRIPCION", "FECHA INICIO", "FECHA TERMINA",
+                "RESOLUCION NUMERO", "RESOLUCION FECHA", "SALARIO MENSUAL", "TOTAL VINCULACION",
+                "PROGRAMA CODIGO", "PROGRAMA DESCRIPCION", "DOFE", "NUEVO", "ULTIMA VINCULACION",
+                "EMAIL PERSONAL", "PROFESIONAL", "DOCTORADO", "ESTADO"
+            } else c_str)
+    df_copy.columns = nuevas_cols
+    return df_copy
+
+
+def procesar_dataframe_resoluciones(
+    df: pd.DataFrame,
+    docentes_existentes_por_doc: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+    """
+    Transforma el DataFrame leído de `Resoluciones Docentes.xlsx` (formato de 24 columnas de nuevos periodos
+    o formato extendido de 32 columnas) en:
     1. `lista_docentes`: diccionarios listos para `upsert` en `public.docentes`.
-    2. `mapa_estudios_por_doc`: diccionario `{documento: [estudios...]}` desglosados de
+       Si el Excel solo trae las 24 columnas oficiales de resolución (sin `Correos Institucionales`,
+       `Nivel de Inglés`, `Telefono`, `CUMPLEAÑOS` ni columnas de títulos), preserva automáticamente
+       los valores que el docente ya tenía registrados en Supabase (`docentes_existentes_por_doc`).
+    2. `mapa_estudios_por_doc`: diccionario `{documento: [estudios...]}` desglosados si existen
        las columnas `PROFESIONAL`, `ESPECIALIZACIÓN`, `MAESTRÍA` y `DOCTORADO`.
     """
+    df_norm = _normalizar_columnas_df_resoluciones(df)
+    cols_presentes = set(df_norm.columns)
+    mapa_existentes = docentes_existentes_por_doc or {}
+
+    tiene_col_correo = "Correos Institucionales" in cols_presentes
+    tiene_col_ingles = "Nivel de Inglés" in cols_presentes
+    tiene_col_telefono = "Telefono" in cols_presentes
+    tiene_col_cumple = "CUMPLEAÑOS (MES Y DIA no año)" in cols_presentes
+    tiene_cols_formacion = any(
+        c in cols_presentes for c in ("PROFESIONAL", "ESPECIALIZACIÓN", "MAESTRÍA", "DOCTORADO")
+    )
+
     lista_docentes: List[Dict[str, Any]] = []
     mapa_estudios: Dict[str, List[Dict[str, Any]]] = {}
 
-    for _, row in df.iterrows():
+    for _, row in df_norm.iterrows():
         doc_int = _limpiar_entero(row.get("DOCUMENTO"))
         nombre = _limpiar_texto(row.get("NOMBRES"))
-        correo = _limpiar_texto(row.get("Correos Institucionales"))
 
         if not doc_int or not nombre:
             continue
 
         documento_str = str(doc_int)
-        if not correo:
-            correo = f"docente.{documento_str}@unad.edu.co"
+        prev = mapa_existentes.get(documento_str) or {}
+
+        # Correo institucional: usar el del Excel si viene, si no conservar el existente en BD, o generar fallback institucional
+        correo_excel = _limpiar_texto(row.get("Correos Institucionales")) if tiene_col_correo else None
+        if correo_excel:
+            correo = correo_excel.lower()
+        elif prev.get("correo_institucional"):
+            correo = str(prev["correo_institucional"]).strip().lower()
         else:
-            correo = correo.lower()
-
-        nivel_mcer, detalle_ing = normalizar_nivel_ingles(row.get("Nivel de Inglés"))
-
-        prof_txt = _limpiar_texto(row.get("PROFESIONAL"))
-        esp_txt = _limpiar_texto(row.get("ESPECIALIZACIÓN"))
-        mae_txt = _limpiar_texto(row.get("MAESTRÍA"))
-        doc_txt = _limpiar_texto(row.get("DOCTORADO"))
+            correo = f"docente.{documento_str}@unad.edu.co"
 
         periodo_val = _limpiar_entero(row.get("PERIODO ACADEMICO"))
         res_num_val = _limpiar_entero(row.get("RESOLUCION NUMERO"))
-        tel_val = _limpiar_entero(row.get("Telefono"))
+
+        email_pers_excel = _limpiar_texto(row.get("EMAIL PERSONAL"))
 
         registro_docente: Dict[str, Any] = {
             "documento": documento_str,
             "nombre_completo": nombre,
             "correo_institucional": correo,
-            "email_personal": _limpiar_texto(row.get("EMAIL PERSONAL")),
-            "telefono": str(tel_val) if tel_val else _limpiar_texto(row.get("Telefono")),
-            "cumpleanos_mes_dia": _limpiar_cumpleanos_mes_dia(row.get("CUMPLEAÑOS (MES Y DIA no año)")),
-            "nivel_ingles": nivel_mcer,
-            "detalle_ingles_original": detalle_ing,
-            "nivel_formacion_maximo": _limpiar_texto(row.get("NIVEL FORMACION")),
-            "formacion_profesional_texto": None if _es_texto_vacio_o_no_aplica(prof_txt) else prof_txt,
-            "formacion_especializacion_texto": None if _es_texto_vacio_o_no_aplica(esp_txt) else esp_txt,
-            "formacion_maestria_texto": None if _es_texto_vacio_o_no_aplica(mae_txt) else mae_txt,
-            "formacion_doctorado_texto": None if _es_texto_vacio_o_no_aplica(doc_txt) else doc_txt,
+            "email_personal": email_pers_excel if email_pers_excel else prev.get("email_personal"),
+            "nivel_formacion_maximo": _limpiar_texto(row.get("NIVEL FORMACION")) or prev.get("nivel_formacion_maximo"),
             "consecutivo_vinculacion": _limpiar_entero(row.get("#")),
             "periodo_academico": str(periodo_val) if periodo_val else _limpiar_texto(row.get("PERIODO ACADEMICO")),
             "estado_aceptacion": _limpiar_texto(row.get("ESTADO ACEPTACION")),
@@ -478,14 +531,64 @@ def procesar_dataframe_resoluciones(df: pd.DataFrame) -> Tuple[List[Dict[str, An
             "estado": normalizar_estado_docente(row.get("ESTADO") or row.get("estado") or "A"),
         }
 
-        lista_docentes.append(registro_docente)
+        # Campos opcionales que solo vienen en el archivo extendido de 32 columnas (preservar los existentes si vienen las 24 columnas)
+        if tiene_col_ingles and not _es_texto_vacio_o_no_aplica(row.get("Nivel de Inglés")):
+            nivel_mcer, detalle_ing = normalizar_nivel_ingles(row.get("Nivel de Inglés"))
+            registro_docente["nivel_ingles"] = nivel_mcer
+            registro_docente["detalle_ingles_original"] = detalle_ing
+        elif prev.get("nivel_ingles"):
+            registro_docente["nivel_ingles"] = prev["nivel_ingles"]
+            if prev.get("detalle_ingles_original"):
+                registro_docente["detalle_ingles_original"] = prev["detalle_ingles_original"]
 
-        estudios_doc: List[Dict[str, Any]] = []
-        estudios_doc.extend(extraer_estudios_de_texto(prof_txt, "Pregrado"))
-        estudios_doc.extend(extraer_estudios_de_texto(esp_txt, "Especialización"))
-        estudios_doc.extend(extraer_estudios_de_texto(mae_txt, "Maestría"))
-        estudios_doc.extend(extraer_estudios_de_texto(doc_txt, "Doctorado"))
-        mapa_estudios[documento_str] = estudios_doc
+        if tiene_col_telefono:
+            tel_val = _limpiar_entero(row.get("Telefono"))
+            tel_str = str(tel_val) if tel_val else _limpiar_texto(row.get("Telefono"))
+            if tel_str:
+                registro_docente["telefono"] = tel_str
+            elif prev.get("telefono"):
+                registro_docente["telefono"] = prev["telefono"]
+        elif prev.get("telefono"):
+            registro_docente["telefono"] = prev["telefono"]
+
+        if tiene_col_cumple:
+            cumple_str = _limpiar_cumpleanos_mes_dia(row.get("CUMPLEAÑOS (MES Y DIA no año)"))
+            if cumple_str:
+                registro_docente["cumpleanos_mes_dia"] = cumple_str
+            elif prev.get("cumpleanos_mes_dia"):
+                registro_docente["cumpleanos_mes_dia"] = prev["cumpleanos_mes_dia"]
+        elif prev.get("cumpleanos_mes_dia"):
+            registro_docente["cumpleanos_mes_dia"] = prev["cumpleanos_mes_dia"]
+
+        if tiene_cols_formacion:
+            prof_txt = _limpiar_texto(row.get("PROFESIONAL"))
+            esp_txt = _limpiar_texto(row.get("ESPECIALIZACIÓN"))
+            mae_txt = _limpiar_texto(row.get("MAESTRÍA"))
+            doc_txt = _limpiar_texto(row.get("DOCTORADO"))
+
+            registro_docente["formacion_profesional_texto"] = (
+                None if _es_texto_vacio_o_no_aplica(prof_txt) else prof_txt
+            ) or prev.get("formacion_profesional_texto")
+            registro_docente["formacion_especializacion_texto"] = (
+                None if _es_texto_vacio_o_no_aplica(esp_txt) else esp_txt
+            ) or prev.get("formacion_especializacion_texto")
+            registro_docente["formacion_maestria_texto"] = (
+                None if _es_texto_vacio_o_no_aplica(mae_txt) else mae_txt
+            ) or prev.get("formacion_maestria_texto")
+            registro_docente["formacion_doctorado_texto"] = (
+                None if _es_texto_vacio_o_no_aplica(doc_txt) else doc_txt
+            ) or prev.get("formacion_doctorado_texto")
+
+            estudios_doc: List[Dict[str, Any]] = []
+            estudios_doc.extend(extraer_estudios_de_texto(prof_txt, "Pregrado"))
+            estudios_doc.extend(extraer_estudios_de_texto(esp_txt, "Especialización"))
+            estudios_doc.extend(extraer_estudios_de_texto(mae_txt, "Maestría"))
+            estudios_doc.extend(extraer_estudios_de_texto(doc_txt, "Doctorado"))
+            mapa_estudios[documento_str] = estudios_doc
+        else:
+            mapa_estudios[documento_str] = []
+
+        lista_docentes.append(registro_docente)
 
     return lista_docentes, mapa_estudios
 
@@ -518,7 +621,22 @@ def importar_resoluciones_excel_a_supabase(
     except Exception as exc:
         return False, 0, 0, f"Error al leer el archivo Excel de resoluciones: {exc}"
 
-    lista_docentes, mapa_estudios = procesar_dataframe_resoluciones(df)
+    # Consultar perfiles actuales en Supabase para preservar correo institucional, nivel de inglés, teléfono,
+    # cumpleaños y títulos cuando el archivo del nuevo periodo traiga únicamente las 24 columnas de resolución
+    docentes_existentes_por_doc: Dict[str, Dict[str, Any]] = {}
+    try:
+        res_existentes = client.table("docentes").select("*").execute()
+        for d_ex in (res_existentes.data or []):
+            doc_k = str(d_ex.get("documento") or "").strip()
+            if doc_k:
+                docentes_existentes_por_doc[doc_k] = d_ex
+    except Exception:
+        pass
+
+    lista_docentes, mapa_estudios = procesar_dataframe_resoluciones(
+        df,
+        docentes_existentes_por_doc=docentes_existentes_por_doc,
+    )
     if not lista_docentes:
         return False, 0, 0, "No se encontraron filas válidas con DOCUMENTO y NOMBRES en el archivo Excel."
 

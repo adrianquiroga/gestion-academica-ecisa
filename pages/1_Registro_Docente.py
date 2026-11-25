@@ -136,11 +136,14 @@ if usuario_es_admin:
     with st.expander("📥 Importar / Sincronizar Base de Datos desde `Resoluciones Docentes.xlsx` (Solo Admin)", expanded=False):
         st.markdown(
             """
-            Esta herramienta procesa las **32 columnas** de `Resoluciones Docentes.xlsx`:
-            * Normaliza el **Nivel de Inglés** al estándar MCER (`A1`..`C2`, `En caracterización / Prueba`, `Sin certificar`) conservando el texto original.
-            * Carga los datos de **Resolución, Periodo, Modalidad, Horas, Salario, Total Vinculación, Escuela, Centro (CEAD/CCAV/UDR) y Programa**.
-            * **Gestión inteligente de Estado (`A` / `R`) y `FECHA TERMINA`:** Los docentes incluidos en el nuevo Excel quedan activos (`A`), y opcionalmente los de periodos anteriores con `FECHA TERMINA` vencida que no estén en el archivo pasan automáticamente a Retirados (`R`).
-            * Desglosa automáticamente los títulos de las columnas **`PROFESIONAL`**, **`ESPECIALIZACIÓN`**, **`MAESTRÍA`** y **`DOCTORADO`** en la tabla `docente_estudios` sin duplicar registros.
+            Esta herramienta es compatible tanto con el **formato estándar de 24 columnas de nuevos periodos**:
+            `#`, `PERIODO ACADEMICO`, `ESTADO ACEPTACION`, `DOCUMENTO`, `NOMBRES`, `MODALIDAD`, `NIVEL FORMACION`, `HORAS`,
+            `ESCUELA CODIGO`, `ESCUELA DESCRIPCION`, `CENTRO DESCRIPCION`, `ZONA DESCRIPCION`, `FECHA INICIO`, `FECHA TERMINA`,
+            `RESOLUCION NUMERO`, `RESOLUCION FECHA`, `SALARIO MENSUAL`, `TOTAL VINCULACION`, `PROGRAMA CODIGO`,
+            `PROGRAMA DESCRIPCION`, `DOFE`, `NUEVO`, `ULTIMA VINCULACION`, `EMAIL PERSONAL`
+            como con el formato extendido de 32 columnas:
+            * **Preservación inteligente de perfil:** Si el archivo del nuevo periodo trae las **24 columnas de resolución**, el sistema actualiza todos los datos de contratación del nuevo periodo y **conserva intactos** el Correo Institucional, Teléfono, Cumpleaños, Nivel/Certificado de Inglés en Drive, Títulos Académicos y Aportes que el docente ya tenía registrados.
+            * **Gestión inteligente de Estado (`A` / `R`) y `FECHA TERMINA`:** Los docentes incluidos en el nuevo Excel quedan o vuelven automáticamente a **Activo (`A`)**, y opcionalmente los de periodos anteriores con `FECHA TERMINA` vencida que no estén en el archivo pasan automáticamente a **Retirado (`R`)**.
             """
         )
 
