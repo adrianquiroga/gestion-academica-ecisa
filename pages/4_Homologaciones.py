@@ -23,10 +23,10 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🔄 Módulo de Homologaciones Internas y Externas")
-
 if not renderizar_barra_sesion_y_login():
     st.stop()
+
+st.title("🔄 Módulo de Homologaciones Internas y Externas")
 
 st.info("🚧 **Módulo en construcción - Fase 2/3**")
 

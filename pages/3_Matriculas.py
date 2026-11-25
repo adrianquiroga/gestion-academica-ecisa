@@ -41,6 +41,9 @@ st.set_page_config(
     layout="wide",
 )
 
+if not renderizar_barra_sesion_y_login():
+    st.stop()
+
 c_title, c_refresh = st.columns([4, 1])
 with c_title:
     st.title("📈 Gestión y Analítica de Matrículas (Actas 2025 y 2026)")
@@ -53,9 +56,6 @@ with c_refresh:
     if st.button("🔄 Actualizar Datos", use_container_width=True):
         limpiar_cache_matriculas()
         st.rerun()
-
-if not renderizar_barra_sesion_y_login():
-    st.stop()
 
 usuario_es_admin = es_admin()
 

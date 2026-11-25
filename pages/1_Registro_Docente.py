@@ -69,10 +69,10 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("👨‍🏫 Gestión de Perfil y Resoluciones Docentes")
-
 if not renderizar_barra_sesion_y_login():
     st.stop()
+
+st.title("👨‍🏫 Gestión de Perfil y Resoluciones Docentes")
 
 usuario_es_admin = es_admin()
 

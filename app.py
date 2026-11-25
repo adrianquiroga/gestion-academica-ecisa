@@ -27,11 +27,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎓 Sistema de Gestión Académica")
-st.subheader("Plataforma Integral de Docentes, Matrículas y Homologaciones")
-
 if not renderizar_barra_sesion_y_login():
     st.stop()
+
+st.title("🎓 Sistema de Gestión Académica")
+st.subheader("Plataforma Integral de Docentes, Matrículas y Homologaciones")
 
 st.markdown(
     """
@@ -93,7 +93,12 @@ with c1:
             "Búsqueda de docentes, resoluciones UNAD, actualización de nivel de inglés (MCER), "
             "títulos universitarios y aportes con soportes en Drive."
         )
-        st.page_link("pages/1_Registro_Docente.py", label="Ir a Registro Docente", icon="📝")
+        if st.button("📝 Ir a Registro Docente", use_container_width=True):
+            st.session_state["modulo_navegacion_activo"] = "1_registro"
+            try:
+                st.switch_page("pages/1_Registro_Docente.py")
+            except Exception:
+                st.rerun()
 
 with c2:
     with st.container(border=True):
@@ -103,7 +108,12 @@ with c2:
             "Indicadores gerenciales de docentes, filtros por centro, programa y nivel de inglés, "
             "consulta de soportes en Drive y descarga de PDF."
         )
-        st.page_link("pages/2_Panel_y_PDF.py", label="Ir a Panel Docente", icon="📄")
+        if st.button("📄 Ir a Panel Docente", use_container_width=True):
+            st.session_state["modulo_navegacion_activo"] = "2_panel"
+            try:
+                st.switch_page("pages/2_Panel_y_PDF.py")
+            except Exception:
+                st.rerun()
 
 with c3:
     with st.container(border=True):
@@ -113,7 +123,12 @@ with c3:
             "Analítica comparativa de Actas de Matrícula 2025 y 2026 por periodo, centro, "
             "programa, condición (Antiguos/Nuevos) y estrato."
         )
-        st.page_link("pages/3_Matriculas.py", label="Ir a Matrículas 2025-2026", icon="🗂️")
+        if st.button("🗂️ Ir a Matrículas 2025-2026", use_container_width=True):
+            st.session_state["modulo_navegacion_activo"] = "3_matriculas"
+            try:
+                st.switch_page("pages/3_Matriculas.py")
+            except Exception:
+                st.rerun()
 
 with c4:
     with st.container(border=True):
@@ -123,7 +138,12 @@ with c4:
             "Gestión y trazabilidad de homologaciones internas y externas con soporte "
             "documental de resoluciones y sábanas de notas."
         )
-        st.page_link("pages/4_Homologaciones.py", label="Ver Homologaciones", icon="⚖️")
+        if st.button("⚖️ Ver Homologaciones", use_container_width=True):
+            st.session_state["modulo_navegacion_activo"] = "4_homologaciones"
+            try:
+                st.switch_page("pages/4_Homologaciones.py")
+            except Exception:
+                st.rerun()
 
 with c5:
     with st.container(border=True):
@@ -133,7 +153,12 @@ with c5:
             "Comparativo de créditos proyectados (`proy_zon`) vs realizados (`creditos`) en 2026 "
             "con gráficas por programa (`pro_descripcion`) y CEAD (`nombrecead`)."
         )
-        st.page_link("pages/5_Proyeccion_Creditos.py", label="Ir a Créditos 2026", icon="🎯")
+        if st.button("🎯 Ir a Créditos 2026", use_container_width=True):
+            st.session_state["modulo_navegacion_activo"] = "5_creditos"
+            try:
+                st.switch_page("pages/5_Proyeccion_Creditos.py")
+            except Exception:
+                st.rerun()
 
 st.divider()
 st.caption(
