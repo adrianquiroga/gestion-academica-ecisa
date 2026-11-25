@@ -1,0 +1,34 @@
+# Secretos de Streamlit
+.streamlit/secrets.toml
+.streamlit/claves_docentes.json
+Clave.txt
+
+# Archivos Excel y datos sensibles locales (Ya sincronizados en Supabase)
+datos_locales/
+*.xlsx
+*.xls
+*.csv
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# Caché de Python y archivos compilados
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Archivos temporales y de sistema
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+*.log
+~$*
+
+# IDE
+.vscode/
+.idea/
