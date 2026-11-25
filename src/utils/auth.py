@@ -259,12 +259,19 @@ def renderizar_barra_sesion_y_login() -> bool:
 
     with st.sidebar:
         st.markdown("### 🧭 Módulos del Sistema")
-        st.page_link("app.py", label="Inicio / Portal Principal", icon="🎓")
-        st.page_link("pages/1_Registro_Docente.py", label="1. Registro Docente", icon="👨‍🏫")
-        st.page_link("pages/2_Panel_y_PDF.py", label="2. Panel y PDF", icon="📊")
-        st.page_link("pages/3_Matriculas.py", label="3. Matrículas", icon="📈")
-        st.page_link("pages/4_Homologaciones.py", label="4. Homologaciones", icon="🔄")
-        st.page_link("pages/5_Proyeccion_Creditos.py", label="5. Proyección Créditos", icon="🎯")
+        enlaces_modulos = [
+            ("app.py", "Inicio / Portal Principal", "🎓"),
+            ("pages/1_Registro_Docente.py", "1. Registro Docente", "👨‍🏫"),
+            ("pages/2_Panel_y_PDF.py", "2. Panel y PDF", "📊"),
+            ("pages/3_Matriculas.py", "3. Matrículas", "📈"),
+            ("pages/4_Homologaciones.py", "4. Homologaciones", "🔄"),
+            ("pages/5_Proyeccion_Creditos.py", "5. Proyección Créditos", "🎯"),
+        ]
+        for ruta_pag, etiqueta_pag, icono_pag in enlaces_modulos:
+            try:
+                st.page_link(ruta_pag, label=etiqueta_pag, icon=icono_pag)
+            except Exception:
+                pass
         st.divider()
 
         st.markdown("### 🔐 Sesión de Usuario")
