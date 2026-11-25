@@ -271,7 +271,11 @@ def renderizar_barra_sesion_y_login() -> bool:
             try:
                 st.page_link(ruta_pag, label=etiqueta_pag, icon=icono_pag)
             except Exception:
-                pass
+                try:
+                    nombre_pag = Path(ruta_pag).name
+                    st.page_link(nombre_pag, label=etiqueta_pag, icon=icono_pag)
+                except Exception:
+                    pass
         st.divider()
 
         st.markdown("### 🔐 Sesión de Usuario")
