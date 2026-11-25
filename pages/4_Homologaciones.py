@@ -3,6 +3,7 @@ Módulo 3 (Fase 3): Gestión de Homologaciones Internas y Externas.
 Esqueleto base preparado con la tabla `public.homologaciones` (incluyendo `soporte_url`) lista en `src/db/schema.sql`.
 """
 
+import importlib
 from pathlib import Path
 import sys
 
@@ -11,6 +12,10 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import streamlit as st
+import src.utils.auth as _auth_mod
+
+importlib.reload(_auth_mod)
+renderizar_barra_sesion_y_login = _auth_mod.renderizar_barra_sesion_y_login
 
 st.set_page_config(
     page_title="Módulo de Homologaciones - Fase 3",
@@ -19,6 +24,10 @@ st.set_page_config(
 )
 
 st.title("🔄 Módulo de Homologaciones Internas y Externas")
+
+if not renderizar_barra_sesion_y_login():
+    st.stop()
+
 st.info("🚧 **Módulo en construcción - Fase 2/3**")
 
 with st.container(border=True):

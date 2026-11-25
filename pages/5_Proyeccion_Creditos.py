@@ -10,6 +10,7 @@ Incluye gráficas comparativas por Programa Académico y por Nombre del CEAD, po
 matriz cruzada y descarga de Informe Ejecutivo en PDF.
 """
 
+import importlib
 from pathlib import Path
 import sys
 
@@ -30,6 +31,10 @@ from src.services.creditos_svc import (
     sincronizar_data_ecisa_a_supabase,
 )
 from src.services.pdf_svc import generar_pdf_informe_creditos_ecisa
+import src.utils.auth as _auth_mod
+
+importlib.reload(_auth_mod)
+renderizar_barra_sesion_y_login = _auth_mod.renderizar_barra_sesion_y_login
 
 st.set_page_config(
     page_title="Créditos Proyectados vs Realizados 2026 - ECISA",
@@ -49,6 +54,9 @@ with c_refresh:
     if st.button("🔄 Actualizar Datos", use_container_width=True):
         limpiar_cache_creditos()
         st.rerun()
+
+if not renderizar_barra_sesion_y_login():
+    st.stop()
 
 ok_db, msg_db = verificar_configuracion_supabase()
 if not ok_db:
