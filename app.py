@@ -5,6 +5,13 @@ y facilita la navegación hacia los módulos de la aplicación.
 """
 
 import importlib
+from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import streamlit as st
 from src.db.client import probar_conexion_supabase, verificar_configuracion_supabase
 from src.services.drive_svc import verificar_configuracion_drive

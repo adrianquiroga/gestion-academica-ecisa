@@ -3,6 +3,13 @@ Módulo 3 (Fase 3): Gestión de Homologaciones Internas y Externas.
 Esqueleto base preparado con la tabla `public.homologaciones` (incluyendo `soporte_url`) lista en `src/db/schema.sql`.
 """
 
+from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import streamlit as st
 
 st.set_page_config(

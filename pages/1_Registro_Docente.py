@@ -9,6 +9,13 @@ Adaptado para manejar todos los campos de `Resoluciones Docentes.xlsx` (UNAD):
 
 from datetime import datetime
 import importlib
+from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import streamlit as st
 from src.db.client import verificar_configuracion_supabase
 import src.services.docentes_svc as _doc_svc

@@ -10,6 +10,13 @@ Incluye gráficas comparativas por Programa Académico y por Nombre del CEAD, po
 matriz cruzada y descarga de Informe Ejecutivo en PDF.
 """
 
+from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go

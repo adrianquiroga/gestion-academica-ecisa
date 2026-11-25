@@ -10,6 +10,13 @@ Diseñado siguiendo estrictamente las reglas de rendimiento para +15.000 registr
 
 import importlib
 import math
+from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
