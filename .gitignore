@@ -1,6 +1,7 @@
 # Secretos de Streamlit
 .streamlit/secrets.toml
 .streamlit/claves_docentes.json
+.streamlit/estados_docentes.json
 Clave.txt
 
 # Archivos Excel y datos sensibles locales (Ya sincronizados en Supabase)

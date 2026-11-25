@@ -29,7 +29,9 @@ importlib.reload(_auth_mod)
 
 CARPETA_DRIVE_SOPORTES_INGLES_URL = _doc_svc.CARPETA_DRIVE_SOPORTES_INGLES_URL
 CATEGORIAS_APORTE = _doc_svc.CATEGORIAS_APORTE
+ESTADOS_DOCENTE = _doc_svc.ESTADOS_DOCENTE
 NIVELES_INGLES = _doc_svc.NIVELES_INGLES
+etiqueta_estado_docente = _doc_svc.etiqueta_estado_docente
 limpiar_cache_docentes = _doc_svc.limpiar_cache_docentes
 listar_docentes_con_relaciones = _doc_svc.listar_docentes_con_relaciones
 obtener_estadisticas_consolidadas = _doc_svc.obtener_estadisticas_consolidadas
@@ -73,11 +75,17 @@ stats = obtener_estadisticas_consolidadas()
 # 1. MÉTRICAS CLAVE (KPIs) Y ACCESO A CARPETA DE DRIVE
 # =============================================================================
 k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("👨‍🏫 Total Docentes", stats["total_docentes"])
+retirados_cnt = int(stats.get("total_docentes_retirados", 0))
+delta_ret = f"{retirados_cnt} retirado(s) 'R' excluidos" if retirados_cnt > 0 else "Solo docentes Activos ('A')"
+k1.metric("👨‍🏫 Docentes Activos ('A')", stats["total_docentes"], delta=delta_ret, delta_color="off")
 k2.metric("⏱️ Total Horas Vinculación", f"{stats['total_horas_vinculacion']:,}".replace(",", "."))
 k3.metric("🎓 Títulos de Posgrado", stats["total_posgrados"])
 k4.metric("🌐 Con Soporte Inglés (Drive)", stats["docentes_con_soporte_ingles"])
 k5.metric("🚀 Total Aportes", stats["total_aportes"])
+st.caption(
+    "ℹ️ **Nota estadística:** Todos los indicadores y gráficas contabilizan exclusivamente a los docentes en estado **Activo (`A`)**. "
+    "Los docentes en estado **Retirado (`R`)** se excluyen automáticamente de las estadísticas y pueden reactivarse cuando vuelvan a ser contratados."
+)
 
 if usuario_es_admin:
     c_dr1, c_dr2 = st.columns(2)
@@ -168,7 +176,20 @@ if not usuario_es_admin:
 
 st.markdown("### 🔎 Filtros de Consulta y Exportación Consolidada (Exclusivo Administrador)")
 
-f1, f2, f3, f4, f5 = st.columns(5)
+f0, f1, f2, f3, f4, f5 = st.columns([1.05, 1, 1.15, 1.15, 0.95, 1])
+
+with f0:
+    opciones_filtro_estado = {
+        "A": "Activos (A)",
+        "R": "Retirados (R)",
+        "Todos": "Todos (A y R)",
+    }
+    filtro_estado = st.selectbox(
+        "Estado Docente (`estado`)",
+        options=list(opciones_filtro_estado.keys()),
+        index=0,
+        format_func=lambda k: opciones_filtro_estado[k],
+    )
 
 with f1:
     filtro_ingles = st.selectbox("Nivel de Inglés", options=["Todos"] + NIVELES_INGLES)
@@ -210,6 +231,7 @@ docentes_filtrados = listar_docentes_con_relaciones(
     filtro_modalidad=filtro_modalidad,
     filtro_centro=filtro_centro,
     filtro_programa=filtro_programa,
+    filtro_estado=filtro_estado,
     busqueda_texto=busqueda_txt,
     limite=150,
 )
@@ -248,6 +270,7 @@ else:
             {
                 "Documento": d.get("documento", ""),
                 "Nombre Completo": d.get("nombre_completo", ""),
+                "Estado": etiqueta_estado_docente(d.get("estado", "A")),
                 "Formación": d.get("nivel_formacion_maximo") or "-",
                 "Nivel Inglés": d.get("nivel_ingles", "Sin certificar"),
                 "Certificado Inglés": d.get("soporte_ingles_url") or "",
@@ -283,7 +306,7 @@ else:
     st.markdown("### 📄 Ficha Individual Docente, Detalle de Resolución y Soportes en Google Drive")
 
     opciones_docentes = {
-        f"{d.get('nombre_completo')} — Doc: {d.get('documento')} | {d.get('centro_descripcion') or 'Sin centro'} | Inglés: {d.get('nivel_ingles')}": d
+        f"[{etiqueta_estado_docente(d.get('estado', 'A'))}] {d.get('nombre_completo')} — Doc: {d.get('documento')} | {d.get('centro_descripcion') or 'Sin centro'} | Inglés: {d.get('nivel_ingles')}": d
         for d in docentes_filtrados
     }
 
@@ -318,7 +341,7 @@ else:
         c_d1, c_d2, c_d3 = st.columns([1.4, 1.5, 1.1])
         with c_d1:
             st.markdown(f"**👤 Docente:** {docente_sel.get('nombre_completo')}")
-            st.markdown(f"**🪪 Documento:** `{docente_sel.get('documento')}`")
+            st.markdown(f"**🪪 Documento:** `{docente_sel.get('documento')}` | **Estado:** `{etiqueta_estado_docente(docente_sel.get('estado', 'A'))}`")
             st.markdown(f"**✉️ Correo Inst.:** {docente_sel.get('correo_institucional')}")
             st.markdown(f"**📞 Teléfono / Email Pers.:** {docente_sel.get('telefono') or '-'} | {docente_sel.get('email_personal') or '-'}")
         with c_d2:

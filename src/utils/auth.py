@@ -135,6 +135,8 @@ def autenticar_usuario(usuario: str, clave: str) -> Tuple[bool, str]:
             )
 
         docente = res.data[0]
+        from src.services.docentes_svc import obtener_estado_efectivo_docente
+        docente["estado"] = obtener_estado_efectivo_docente(docente)
         doc_cedula = str(docente.get("documento", "")).strip()
 
         # Consultar hash guardado en Supabase o en el archivo de respaldo local

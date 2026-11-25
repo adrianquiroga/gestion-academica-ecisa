@@ -8,12 +8,15 @@ incluyendo:
 - CRUD completo de docentes, estudios y aportes con caché `@st.cache_data(ttl=300)`.
 """
 
+import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 from src.db.client import get_supabase_client
+
+RUTA_ESTADOS_LOCAL = Path(".streamlit/estados_docentes.json")
 
 RUTA_EXCEL_RESOLUCIONES_DEFECTO = (
     Path("datos_locales/Resoluciones Docentes.xlsx")
@@ -75,6 +78,66 @@ CATEGORIAS_APORTE = [
     "Vida Académica",
     "Vida Universitaria",
 ]
+
+ESTADOS_DOCENTE = {
+    "A": "Activo (A)",
+    "R": "Retirado (R)",
+}
+
+
+def normalizar_estado_docente(valor: Any) -> str:
+    """
+    Normaliza el estado del docente a 'A' (Activo) o 'R' (Retirado).
+    Por defecto retorna 'A'.
+    """
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return "A"
+    txt = str(valor).strip().upper()
+    if txt in {"R", "RETIRADO", "RETIRADA", "INACTIVO", "INACTIVA", "RETIRADO (R)"} or txt.startswith("R"):
+        return "R"
+    return "A"
+
+
+def etiqueta_estado_docente(codigo: Any) -> str:
+    """Retorna la etiqueta legible ('Activo (A)' o 'Retirado (R)') para el código de estado."""
+    cod = normalizar_estado_docente(codigo)
+    return ESTADOS_DOCENTE.get(cod, "Activo (A)")
+
+
+def _leer_estados_locales() -> Dict[str, str]:
+    if not RUTA_ESTADOS_LOCAL.exists():
+        return {}
+    try:
+        return json.loads(RUTA_ESTADOS_LOCAL.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _guardar_estado_local(documento: str, estado: str) -> None:
+    try:
+        mapa = _leer_estados_locales()
+        mapa[str(documento).strip()] = normalizar_estado_docente(estado)
+        RUTA_ESTADOS_LOCAL.parent.mkdir(parents=True, exist_ok=True)
+        RUTA_ESTADOS_LOCAL.write_text(json.dumps(mapa, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def obtener_estado_efectivo_docente(docente: Optional[Dict[str, Any]]) -> str:
+    """
+    Obtiene el estado ('A' o 'R') de un registro docente desde la columna `estado` de Supabase
+    o desde el respaldo local si la columna aún no existe en la tabla remota.
+    """
+    if not docente:
+        return "A"
+    if docente.get("estado"):
+        return normalizar_estado_docente(docente.get("estado"))
+    doc_str = str(docente.get("documento") or "").strip()
+    if doc_str:
+        mapa_local = _leer_estados_locales()
+        if doc_str in mapa_local:
+            return normalizar_estado_docente(mapa_local[doc_str])
+    return "A"
 
 
 def limpiar_cache_docentes() -> None:
@@ -325,6 +388,7 @@ def procesar_dataframe_resoluciones(df: pd.DataFrame) -> Tuple[List[Dict[str, An
             "dofe": _limpiar_texto(row.get("DOFE")),
             "es_nuevo": _limpiar_texto(row.get("NUEVO")),
             "ultima_vinculacion": _limpiar_fecha_iso(row.get("ULTIMA VINCULACION")),
+            "estado": normalizar_estado_docente(row.get("ESTADO") or row.get("estado") or "A"),
         }
 
         lista_docentes.append(registro_docente)
@@ -370,11 +434,27 @@ def importar_resoluciones_excel_a_supabase(
 
     try:
         # 1. Upsert masivo de docentes (respetando soporte_ingles_url existente al no sobreescribirlo)
-        res_upsert = (
-            client.table("docentes")
-            .upsert(lista_docentes, on_conflict="documento")
-            .execute()
-        )
+        # Si un docente que estaba Retirado ('R') vuelve en las resoluciones del nuevo periodo, pasa a Activo ('A')
+        try:
+            res_upsert = (
+                client.table("docentes")
+                .upsert(lista_docentes, on_conflict="documento")
+                .execute()
+            )
+        except Exception as exc_up:
+            if "estado" in str(exc_up).lower():
+                for d_item in lista_docentes:
+                    _guardar_estado_local(d_item["documento"], d_item.get("estado", "A"))
+                    d_item.pop("estado", None)
+                res_upsert = (
+                    client.table("docentes")
+                    .upsert(lista_docentes, on_conflict="documento")
+                    .execute()
+                )
+            else:
+                raise exc_up
+        for d_item in lista_docentes:
+            _guardar_estado_local(d_item["documento"], d_item.get("estado", "A"))
         docentes_guardados = res_upsert.data or []
         total_docentes = len(docentes_guardados)
 
@@ -589,7 +669,9 @@ def buscar_docente(criterio: str) -> Tuple[Optional[Dict[str, Any]], str]:
             .execute()
         )
         if res_doc.data:
-            return res_doc.data[0], "Docente encontrado por número de documento."
+            doc_encontrado = res_doc.data[0]
+            doc_encontrado["estado"] = obtener_estado_efectivo_docente(doc_encontrado)
+            return doc_encontrado, "Docente encontrado por número de documento."
 
         # 2. Búsqueda por correo institucional
         res_mail = (
@@ -600,7 +682,9 @@ def buscar_docente(criterio: str) -> Tuple[Optional[Dict[str, Any]], str]:
             .execute()
         )
         if res_mail.data:
-            return res_mail.data[0], "Docente encontrado por correo institucional."
+            doc_encontrado = res_mail.data[0]
+            doc_encontrado["estado"] = obtener_estado_efectivo_docente(doc_encontrado)
+            return doc_encontrado, "Docente encontrado por correo institucional."
 
         # 3. Búsqueda por nombre parcial
         res_nom = (
@@ -611,7 +695,9 @@ def buscar_docente(criterio: str) -> Tuple[Optional[Dict[str, Any]], str]:
             .execute()
         )
         if res_nom.data:
-            return res_nom.data[0], f"Docente encontrado por coincidencia de nombre: {res_nom.data[0].get('nombre_completo')}."
+            doc_encontrado = res_nom.data[0]
+            doc_encontrado["estado"] = obtener_estado_efectivo_docente(doc_encontrado)
+            return doc_encontrado, f"Docente encontrado por coincidencia de nombre: {doc_encontrado.get('nombre_completo')}."
 
         return None, "No se encontró ningún docente con ese criterio. Puedes crear su perfil o importar `Resoluciones Docentes.xlsx`."
     except Exception as exc:
@@ -657,27 +743,60 @@ def guardar_o_actualizar_docente(
         for k, v in datos_adicionales.items():
             payload[k] = v
 
+    estado_solicitado: Optional[str] = None
+    if "estado" in payload and payload["estado"] is not None:
+        estado_solicitado = normalizar_estado_docente(payload["estado"])
+        payload["estado"] = estado_solicitado
+        _guardar_estado_local(doc_limpio, estado_solicitado)
+
     try:
         if docente_id:
-            res = (
-                client.table("docentes")
-                .update(payload)
-                .eq("id", docente_id)
-                .execute()
-            )
+            try:
+                res = (
+                    client.table("docentes")
+                    .update(payload)
+                    .eq("id", docente_id)
+                    .execute()
+                )
+            except Exception as exc_upd:
+                if "estado" in str(exc_upd).lower() and "estado" in payload:
+                    payload_sin_estado = {k: v for k, v in payload.items() if k != "estado"}
+                    res = (
+                        client.table("docentes")
+                        .update(payload_sin_estado)
+                        .eq("id", docente_id)
+                        .execute()
+                    )
+                else:
+                    raise exc_upd
             limpiar_cache_docentes()
             if res.data:
-                return True, res.data[0], "Perfil y datos de resolución actualizados correctamente."
+                doc_res = res.data[0]
+                doc_res["estado"] = estado_solicitado or obtener_estado_efectivo_docente(doc_res)
+                return True, doc_res, "Perfil y datos de resolución actualizados correctamente."
             return False, None, "No se pudo actualizar el perfil del docente."
         else:
-            res = (
-                client.table("docentes")
-                .upsert(payload, on_conflict="documento")
-                .execute()
-            )
+            try:
+                res = (
+                    client.table("docentes")
+                    .upsert(payload, on_conflict="documento")
+                    .execute()
+                )
+            except Exception as exc_ins:
+                if "estado" in str(exc_ins).lower() and "estado" in payload:
+                    payload_sin_estado = {k: v for k, v in payload.items() if k != "estado"}
+                    res = (
+                        client.table("docentes")
+                        .upsert(payload_sin_estado, on_conflict="documento")
+                        .execute()
+                    )
+                else:
+                    raise exc_ins
             limpiar_cache_docentes()
             if res.data:
-                return True, res.data[0], "Perfil docente registrado correctamente."
+                doc_res = res.data[0]
+                doc_res["estado"] = estado_solicitado or obtener_estado_efectivo_docente(doc_res)
+                return True, doc_res, "Perfil docente registrado correctamente."
             return False, None, "No se recibió confirmación al registrar el docente."
     except Exception as exc:
         return False, None, f"Error al guardar perfil docente en Supabase: {exc}"
@@ -834,11 +953,16 @@ def listar_docentes_con_relaciones(
     filtro_modalidad: Optional[str] = None,
     filtro_centro: Optional[str] = None,
     filtro_programa: Optional[str] = None,
+    filtro_estado: Optional[str] = "A",
     busqueda_texto: Optional[str] = None,
     limite: int = 150,
 ) -> List[Dict[str, Any]]:
     """
     Consulta docentes junto con sus estudios, aportes y datos de resolución.
+    Permite filtrar por `estado`:
+    - `'A'` o `'Activo (A)'`: Solo docentes Activos (valor por defecto para reportes).
+    - `'R'` o `'Retirado (R)'`: Solo docentes Retirados.
+    - `'Todos'` o `None`: Todos los docentes.
     """
     client = get_supabase_client()
     if client is None:
@@ -873,6 +997,13 @@ def listar_docentes_con_relaciones(
         res = query.execute()
         docentes: List[Dict[str, Any]] = res.data or []
 
+        for d in docentes:
+            d["estado"] = obtener_estado_efectivo_docente(d)
+
+        if filtro_estado and filtro_estado not in {"Todos", "Todas"}:
+            cod_filtro = normalizar_estado_docente(filtro_estado)
+            docentes = [d for d in docentes if d.get("estado", "A") == cod_filtro]
+
         if filtro_categoria_aporte and filtro_categoria_aporte != "Todas":
             docentes = [
                 d
@@ -891,14 +1022,15 @@ def listar_docentes_con_relaciones(
 @st.cache_data(ttl=300, show_spinner=False)
 def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
     """
-    Calcula las métricas gerenciales consolidadas incluyendo la información de resoluciones:
-    - Total docentes, horas contratadas, valor total vinculación.
-    - Distribución por nivel de inglés, nivel de formación máximo, modalidad, centro y programa.
-    - Total estudios, posgrados y aportes por categoría.
+    Calcula las métricas gerenciales consolidadas incluyendo la información de resoluciones.
+    IMPORTANTE: Excluye automáticamente de todas las estadísticas a los docentes cuyo
+    campo `estado` sea Retirado ('R'), contabilizando únicamente a los docentes Activos ('A').
     """
     client = get_supabase_client()
     stats: Dict[str, Any] = {
         "total_docentes": 0,
+        "total_docentes_retirados": 0,
+        "total_docentes_registrados": 0,
         "total_estudios": 0,
         "total_posgrados": 0,
         "total_aportes": 0,
@@ -923,20 +1055,32 @@ def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
     try:
         res_doc = (
             client.table("docentes")
-            .select(
-                "id, nivel_ingles, soporte_ingles_url, nivel_formacion_maximo, "
-                "modalidad, centro_descripcion, programa_descripcion, horas_vinculacion, total_vinculacion"
-            )
+            .select("*")
             .execute()
         )
-        docentes = res_doc.data or []
-        stats["total_docentes"] = len(docentes)
+        todos_docentes = res_doc.data or []
+        stats["total_docentes_registrados"] = len(todos_docentes)
+
+        docentes_activos: List[Dict[str, Any]] = []
+        ids_activos = set()
+
+        for d in todos_docentes:
+            est_doc = obtener_estado_efectivo_docente(d)
+            d["estado"] = est_doc
+            if est_doc == "R":
+                stats["total_docentes_retirados"] += 1
+            else:
+                docentes_activos.append(d)
+                if d.get("id"):
+                    ids_activos.add(d["id"])
+
+        stats["total_docentes"] = len(docentes_activos)
 
         centros_set = set()
         programas_set = set()
         modalidades_set = set()
 
-        for d in docentes:
+        for d in docentes_activos:
             niv = d.get("nivel_ingles") or "Sin certificar"
             stats["distribucion_ingles"][niv] = stats["distribucion_ingles"].get(niv, 0) + 1
             if d.get("soporte_ingles_url"):
@@ -967,16 +1111,28 @@ def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
             if d.get("total_vinculacion"):
                 stats["suma_total_vinculacion"] += float(d["total_vinculacion"])
 
+        # Incluir todos los centros, programas y modalidades conocidos para los filtros del directorio
+        for d in todos_docentes:
+            if d.get("centro_descripcion"):
+                centros_set.add(d["centro_descripcion"])
+            if d.get("programa_descripcion"):
+                programas_set.add(d["programa_descripcion"])
+            if d.get("modalidad"):
+                modalidades_set.add(d["modalidad"])
+
         stats["centros_disponibles"] = sorted(centros_set)
         stats["programas_disponibles"] = sorted(programas_set)
         stats["modalidades_disponibles"] = sorted(modalidades_set)
 
         res_est = (
             client.table("docente_estudios")
-            .select("id, nivel_formacion")
+            .select("id, docente_id, nivel_formacion")
             .execute()
         )
-        estudios = res_est.data or []
+        estudios = [
+            e for e in (res_est.data or [])
+            if e.get("docente_id") in ids_activos
+        ]
         stats["total_estudios"] = len(estudios)
         for e in estudios:
             nf = e.get("nivel_formacion") or "Pregrado"
@@ -986,10 +1142,13 @@ def obtener_estadisticas_consolidadas() -> Dict[str, Any]:
 
         res_apo = (
             client.table("docente_aportes")
-            .select("id, categoria")
+            .select("id, docente_id, categoria")
             .execute()
         )
-        aportes = res_apo.data or []
+        aportes = [
+            a for a in (res_apo.data or [])
+            if a.get("docente_id") in ids_activos
+        ]
         stats["total_aportes"] = len(aportes)
         for a in aportes:
             cat = a.get("categoria") or "Investigación"

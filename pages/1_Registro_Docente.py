@@ -35,6 +35,7 @@ validar_archivo_soporte = _drive_svc.validar_archivo_soporte
 
 CARPETA_DRIVE_SOPORTES_INGLES_URL = _doc_svc.CARPETA_DRIVE_SOPORTES_INGLES_URL
 CATEGORIAS_APORTE = _doc_svc.CATEGORIAS_APORTE
+ESTADOS_DOCENTE = _doc_svc.ESTADOS_DOCENTE
 MODALIDADES_VINCULACION = _doc_svc.MODALIDADES_VINCULACION
 NIVELES_FORMACION = _doc_svc.NIVELES_FORMACION
 NIVELES_FORMACION_MAXIMO = _doc_svc.NIVELES_FORMACION_MAXIMO
@@ -46,10 +47,13 @@ agregar_estudio_docente = _doc_svc.agregar_estudio_docente
 buscar_docente = _doc_svc.buscar_docente
 eliminar_aporte_docente = _doc_svc.eliminar_aporte_docente
 eliminar_estudio_docente = _doc_svc.eliminar_estudio_docente
+etiqueta_estado_docente = _doc_svc.etiqueta_estado_docente
 guardar_o_actualizar_docente = _doc_svc.guardar_o_actualizar_docente
 importar_resoluciones_excel_a_supabase = _doc_svc.importar_resoluciones_excel_a_supabase
 importar_respuestas_ingles_a_supabase = _doc_svc.importar_respuestas_ingles_a_supabase
+normalizar_estado_docente = _doc_svc.normalizar_estado_docente
 obtener_aportes_docente = _doc_svc.obtener_aportes_docente
+obtener_estado_efectivo_docente = _doc_svc.obtener_estado_efectivo_docente
 obtener_estudios_docente = _doc_svc.obtener_estudios_docente
 previsualizar_excel_local = _doc_svc.previsualizar_excel_local
 
@@ -284,6 +288,7 @@ val_zona = (docente_actual.get("zona_descripcion") or "") if docente_actual else
 val_programa = (docente_actual.get("programa_descripcion") or "") if docente_actual else ""
 val_salario = float(docente_actual.get("salario_mensual") or 0.0) if docente_actual else 0.0
 val_total_vinc = float(docente_actual.get("total_vinculacion") or 0.0) if docente_actual else 0.0
+val_estado = obtener_estado_efectivo_docente(docente_actual) if docente_actual else "A"
 
 if not docente_actual and st.session_state.get("criterio_ultimo"):
     crit = st.session_state["criterio_ultimo"]
@@ -306,14 +311,28 @@ with st.container(border=True):
     st.markdown(f"#### {encabezado_perfil}")
 
     with st.form("form_datos_basicos_docente", clear_on_submit=False):
-        st.markdown("##### 👤 Identificación y Contacto")
-        c_doc, c_nom, c_cor = st.columns([1, 1.6, 1.4])
+        st.markdown("##### 👤 Identificación, Estado y Contacto")
+        c_doc, c_nom, c_cor, c_est = st.columns([0.9, 1.5, 1.3, 0.9])
         with c_doc:
             input_documento = st.text_input("Número de Documento *", value=val_doc)
         with c_nom:
             input_nombre = st.text_input("Nombre Completo *", value=val_nombre)
         with c_cor:
             input_correo = st.text_input("Correo Institucional *", value=val_correo)
+        with c_est:
+            codigos_estado = list(ESTADOS_DOCENTE.keys())  # ['A', 'R']
+            idx_estado = codigos_estado.index(val_estado) if val_estado in codigos_estado else 0
+            input_estado = st.selectbox(
+                "Estado (`estado`) *",
+                options=codigos_estado,
+                index=idx_estado,
+                format_func=lambda k: ESTADOS_DOCENTE.get(k, k),
+                disabled=not usuario_es_admin,
+                help=(
+                    "Solo el Administrador (`admin`) puede modificar este campo. "
+                    "Los docentes en estado Retirado ('R') no se incluyen en las estadísticas y pueden volver a Activo ('A') al recontratarse en nuevos periodos."
+                ),
+            )
 
         c_tel, c_em_per, c_cum, c_niv_max = st.columns([1, 1.4, 0.8, 1.2])
         with c_tel:
@@ -432,6 +451,7 @@ with st.container(border=True):
                         error_subida = True
 
             if not error_subida:
+                estado_final = normalizar_estado_docente(input_estado) if usuario_es_admin else val_estado
                 datos_extra = {
                     "telefono": input_telefono.strip() or None,
                     "email_personal": input_email_personal.strip() or None,
@@ -453,6 +473,8 @@ with st.container(border=True):
                     "salario_mensual": float(input_salario) if input_salario else None,
                     "total_vinculacion": float(input_total_vinc) if input_total_vinc else None,
                 }
+                if usuario_es_admin:
+                    datos_extra["estado"] = estado_final
 
                 ok_save, doc_guardado, msg_save = guardar_o_actualizar_docente(
                     documento=input_documento,
@@ -492,8 +514,10 @@ aportes_actuales = obtener_aportes_docente(docente_id)
 
 col_resumen, col_pdf_rapido = st.columns([3.2, 1])
 with col_resumen:
+    est_badge = etiqueta_estado_docente(obtener_estado_efectivo_docente(docente_actual))
     st.success(
         f"**Docente:** {docente_actual['nombre_completo']} (`{documento_docente}`) | "
+        f"**Estado:** `{est_badge}` | "
         f"**Centro:** `{docente_actual.get('centro_descripcion') or 'N/A'}` | "
         f"**Resolución:** `{docente_actual.get('resolucion_numero') or 'S/N'}` | "
         f"**Inglés:** `{docente_actual.get('nivel_ingles')}` | "

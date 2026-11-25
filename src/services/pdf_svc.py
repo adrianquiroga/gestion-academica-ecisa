@@ -167,9 +167,12 @@ def generar_pdf_ficha_docente(
     if detalle_ing and detalle_ing != nivel_ing_mostrar:
         nivel_ing_mostrar = f"{nivel_ing_mostrar} ({detalle_ing})"
 
+    estado_cod = str(docente.get("estado") or "A").strip().upper()
+    estado_txt = "Retirado (R)" if estado_cod.startswith("R") else "Activo (A)"
+
     campos_personales = [
         ("Nombre Completo:", docente.get("nombre_completo", "-")),
-        ("Documento de Identidad:", docente.get("documento", "-")),
+        ("Documento / Estado:", f"{docente.get('documento', '-')}  |  Estado: {estado_txt}"),
         ("Correo Institucional:", docente.get("correo_institucional", "-")),
         ("Correo Personal / Telefono:", f"{docente.get('email_personal') or '-'}  |  Tel: {docente.get('telefono') or '-'}"),
         ("Nivel Maximo de Formacion:", docente.get("nivel_formacion_maximo") or "-"),
@@ -355,6 +358,7 @@ def generar_pdf_informe_consolidado(
     pdf.add_page()
 
     total_docentes = max(int(stats.get("total_docentes", 0)), 0)
+    total_retirados = int(stats.get("total_docentes_retirados", 0))
     total_estudios = int(stats.get("total_estudios", 0))
     total_posgrados = int(stats.get("total_posgrados", 0))
     total_aportes = int(stats.get("total_aportes", 0))
@@ -363,11 +367,11 @@ def generar_pdf_informe_consolidado(
     suma_vinculacion = float(stats.get("suma_total_vinculacion", 0.0))
 
     # 1. Indicadores Clave
-    pdf.seccion_titulo("1. Indicadores Clave del Cuerpo Docente y Resoluciones")
+    pdf.seccion_titulo("1. Indicadores Clave del Cuerpo Docente Activo (Excluye Retirados 'R')")
     pdf.set_text_color(30, 41, 59)
 
     kpis = [
-        ("Total de Docentes Registrados:", str(total_docentes)),
+        ("Total de Docentes Activos ('A'):", f"{total_docentes} (Excluidos en estado Retirado 'R': {total_retirados})"),
         ("Total Horas Contratadas en Resoluciones:", f"{total_horas:,}".replace(",", ".")),
         ("Valor Total Consolidado de Vinculacion:", _formatear_moneda(suma_vinculacion)),
         ("Docentes con Certificado de Ingles en Drive:", f"{con_soporte_ing} de {total_docentes}"),

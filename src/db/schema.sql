@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS public.docentes (
     dofe TEXT,
     es_nuevo TEXT,
     ultima_vinculacion DATE,
+    estado TEXT NOT NULL DEFAULT 'A'
+        CHECK (estado IN ('A', 'R')), -- 'A' = Activo, 'R' = Retirado
 
     fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -91,6 +93,10 @@ ALTER TABLE public.docentes ADD COLUMN IF NOT EXISTS es_nuevo TEXT;
 ALTER TABLE public.docentes ADD COLUMN IF NOT EXISTS ultima_vinculacion DATE;
 ALTER TABLE public.docentes ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE public.docentes ADD COLUMN IF NOT EXISTS debe_cambiar_clave BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE public.docentes ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'A';
+ALTER TABLE public.docentes DROP CONSTRAINT IF EXISTS docentes_estado_check;
+ALTER TABLE public.docentes ADD CONSTRAINT docentes_estado_check CHECK (estado IN ('A', 'R'));
+CREATE INDEX IF NOT EXISTS idx_docentes_estado ON public.docentes (estado);
 
 -- Actualizar restricción CHECK de nivel_ingles para incluir 'En caracterización / Prueba'
 ALTER TABLE public.docentes DROP CONSTRAINT IF EXISTS docentes_nivel_ingles_check;
