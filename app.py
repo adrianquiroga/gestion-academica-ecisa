@@ -19,6 +19,7 @@ import src.utils.auth as _auth_mod
 
 importlib.reload(_auth_mod)
 renderizar_barra_sesion_y_login = _auth_mod.renderizar_barra_sesion_y_login
+navegar_a_modulo = _auth_mod.navegar_a_modulo
 
 st.set_page_config(
     page_title="Sistema de Gestión Académica",
@@ -27,7 +28,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-if not renderizar_barra_sesion_y_login():
+if not renderizar_barra_sesion_y_login("inicio"):
     st.stop()
 
 st.title("🎓 Sistema de Gestión Académica")
@@ -94,11 +95,7 @@ with c1:
             "títulos universitarios y aportes con soportes en Drive."
         )
         if st.button("📝 Ir a Registro Docente", use_container_width=True):
-            st.session_state["modulo_navegacion_activo"] = "1_registro"
-            try:
-                st.switch_page("pages/1_Registro_Docente.py")
-            except Exception:
-                st.rerun()
+            navegar_a_modulo("1_registro")
 
 with c2:
     with st.container(border=True):
@@ -109,11 +106,7 @@ with c2:
             "consulta de soportes en Drive y descarga de PDF."
         )
         if st.button("📄 Ir a Panel Docente", use_container_width=True):
-            st.session_state["modulo_navegacion_activo"] = "2_panel"
-            try:
-                st.switch_page("pages/2_Panel_y_PDF.py")
-            except Exception:
-                st.rerun()
+            navegar_a_modulo("2_panel")
 
 with c3:
     with st.container(border=True):
@@ -124,11 +117,7 @@ with c3:
             "programa, condición (Antiguos/Nuevos) y estrato."
         )
         if st.button("🗂️ Ir a Matrículas 2025-2026", use_container_width=True):
-            st.session_state["modulo_navegacion_activo"] = "3_matriculas"
-            try:
-                st.switch_page("pages/3_Matriculas.py")
-            except Exception:
-                st.rerun()
+            navegar_a_modulo("3_matriculas")
 
 with c4:
     with st.container(border=True):
@@ -139,11 +128,7 @@ with c4:
             "documental de resoluciones y sábanas de notas."
         )
         if st.button("⚖️ Ver Homologaciones", use_container_width=True):
-            st.session_state["modulo_navegacion_activo"] = "4_homologaciones"
-            try:
-                st.switch_page("pages/4_Homologaciones.py")
-            except Exception:
-                st.rerun()
+            navegar_a_modulo("4_homologaciones")
 
 with c5:
     with st.container(border=True):
@@ -154,11 +139,7 @@ with c5:
             "con gráficas por programa (`pro_descripcion`) y CEAD (`nombrecead`)."
         )
         if st.button("🎯 Ir a Créditos 2026", use_container_width=True):
-            st.session_state["modulo_navegacion_activo"] = "5_creditos"
-            try:
-                st.switch_page("pages/5_Proyeccion_Creditos.py")
-            except Exception:
-                st.rerun()
+            navegar_a_modulo("5_creditos")
 
 st.divider()
 st.caption(

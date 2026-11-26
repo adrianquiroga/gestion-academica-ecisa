@@ -39,9 +39,10 @@ st.set_page_config(
     page_title="Módulo de Matrículas 2025-2026",
     page_icon="📈",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-if not renderizar_barra_sesion_y_login():
+if not renderizar_barra_sesion_y_login("3_matriculas"):
     st.stop()
 
 c_title, c_refresh = st.columns([4, 1])

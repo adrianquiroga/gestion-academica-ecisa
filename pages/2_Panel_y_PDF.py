@@ -45,9 +45,10 @@ st.set_page_config(
     page_title="Panel Gerencial y Reportes PDF",
     page_icon="📊",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-if not renderizar_barra_sesion_y_login():
+if not renderizar_barra_sesion_y_login("2_panel"):
     st.stop()
 
 c_title, c_refresh = st.columns([4, 1])
@@ -313,6 +314,7 @@ else:
     for d in docentes_filtrados:
         estudios_d = d.get("docente_estudios") or []
         aportes_d = d.get("docente_aportes") or []
+        res_tit = d.get("resumen_titulos") or {}
         filas_tabla.append(
             {
                 "Documento": d.get("documento", ""),
@@ -320,7 +322,11 @@ else:
                 "Estado": etiqueta_estado_docente(d.get("estado", "A")),
                 "Vigencia (FECHA TERMINA)": d.get("vigencia_contrato") or etiqueta_vigencia_contrato(d),
                 "Periodo": d.get("periodo_academico") or "-",
-                "Formación": d.get("nivel_formacion_maximo") or "-",
+                "Nivel Máx.": d.get("nivel_formacion_maximo") or "-",
+                "Título Pregrado": res_tit.get("Pregrado", "-"),
+                "Especialización": res_tit.get("Especialización", "-"),
+                "Maestría": res_tit.get("Maestría", "-"),
+                "Doctorado": res_tit.get("Doctorado", "-"),
                 "Nivel Inglés": d.get("nivel_ingles", "Sin certificar"),
                 "Certificado Inglés": d.get("soporte_ingles_url") or "",
                 "Centro": d.get("centro_descripcion") or "-",
@@ -423,7 +429,14 @@ else:
         col_est_det, col_apo_det = st.columns(2)
 
         with col_est_det:
-            st.markdown(f"##### 🎓 Títulos Académicos ({len(estudios_sel)})")
+            st.markdown(f"##### 🎓 Títulos Académicos Registrados ({len(estudios_sel)})")
+            res_tit_sel = docente_sel.get("resumen_titulos") or {}
+            st.markdown(
+                f"* **Pregrado / Tecnología:** {res_tit_sel.get('Pregrado', '-')}\n"
+                f"* **Especialización:** {res_tit_sel.get('Especialización', '-')}\n"
+                f"* **Maestría:** {res_tit_sel.get('Maestría', '-')}\n"
+                f"* **Doctorado:** {res_tit_sel.get('Doctorado', '-')}"
+            )
             if not estudios_sel:
                 st.caption("Sin títulos desglosados.")
             else:

@@ -54,6 +54,7 @@ guardar_o_actualizar_docente = _doc_svc.guardar_o_actualizar_docente
 importar_resoluciones_excel_a_supabase = _doc_svc.importar_resoluciones_excel_a_supabase
 importar_respuestas_ingles_a_supabase = _doc_svc.importar_respuestas_ingles_a_supabase
 normalizar_estado_docente = _doc_svc.normalizar_estado_docente
+consolidar_estudios_docente = _doc_svc.consolidar_estudios_docente
 obtener_aportes_docente = _doc_svc.obtener_aportes_docente
 obtener_estado_efectivo_docente = _doc_svc.obtener_estado_efectivo_docente
 obtener_estudios_docente = _doc_svc.obtener_estudios_docente
@@ -67,9 +68,10 @@ st.set_page_config(
     page_title="Registro y Resoluciones Docentes",
     page_icon="👨‍🏫",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-if not renderizar_barra_sesion_y_login():
+if not renderizar_barra_sesion_y_login("1_registro"):
     st.stop()
 
 st.title("👨‍🏫 Gestión de Perfil y Resoluciones Docentes")
@@ -540,7 +542,7 @@ if not docente_actual or not docente_actual.get("id"):
 
 docente_id = docente_actual["id"]
 documento_docente = docente_actual["documento"]
-estudios_actuales = obtener_estudios_docente(docente_id)
+estudios_actuales = consolidar_estudios_docente(docente_actual, obtener_estudios_docente(docente_id))
 aportes_actuales = obtener_aportes_docente(docente_id)
 
 col_resumen, col_pdf_rapido = st.columns([3.2, 1])

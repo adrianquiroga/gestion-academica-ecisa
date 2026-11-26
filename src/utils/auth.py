@@ -23,35 +23,65 @@ from src.db.client import get_supabase_client
 ROOT_PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 
 MAPA_MODULOS_SISTEMA = {
-    "inicio": ("🎓 Inicio / Portal Principal", ROOT_PROJECT_DIR / "app.py"),
-    "1_registro": ("👨‍🏫 1. Registro Docente", ROOT_PROJECT_DIR / "pages" / "1_Registro_Docente.py"),
-    "2_panel": ("📊 2. Panel y PDF", ROOT_PROJECT_DIR / "pages" / "2_Panel_y_PDF.py"),
-    "3_matriculas": ("📈 3. Matrículas (2025-2026)", ROOT_PROJECT_DIR / "pages" / "3_Matriculas.py"),
-    "4_homologaciones": ("🔄 4. Homologaciones", ROOT_PROJECT_DIR / "pages" / "4_Homologaciones.py"),
-    "5_creditos": ("🎯 5. Proyección Créditos ECISA", ROOT_PROJECT_DIR / "pages" / "5_Proyeccion_Creditos.py"),
+    "inicio": ("🎓 Inicio / Portal Principal", "🎓 Inicio", ROOT_PROJECT_DIR / "app.py"),
+    "1_registro": ("👨‍🏫 1. Registro Docente", "👨‍🏫 1. Registro", ROOT_PROJECT_DIR / "pages" / "1_Registro_Docente.py"),
+    "2_panel": ("📊 2. Panel y PDF", "📊 2. Panel y PDF", ROOT_PROJECT_DIR / "pages" / "2_Panel_y_PDF.py"),
+    "3_matriculas": ("📈 3. Matrículas (2025-2026)", "📈 3. Matrículas", ROOT_PROJECT_DIR / "pages" / "3_Matriculas.py"),
+    "4_homologaciones": ("🔄 4. Homologaciones", "🔄 4. Homolog.", ROOT_PROJECT_DIR / "pages" / "4_Homologaciones.py"),
+    "5_creditos": ("🎯 5. Proyección Créditos ECISA", "🎯 5. Créditos", ROOT_PROJECT_DIR / "pages" / "5_Proyeccion_Creditos.py"),
 }
 
 
 def _detectar_modulo_script_principal() -> str:
     """Detecta cuál de los archivos del proyecto fue ejecutado como script raíz por Streamlit."""
+    if "_modulo_script_raiz_fijo" in st.session_state and st.session_state["_modulo_script_raiz_fijo"]:
+        return str(st.session_state["_modulo_script_raiz_fijo"])
+
+    nombre_arch = ""
     try:
-        main_mod = sys.modules.get("__main__")
-        main_file = getattr(main_mod, "__file__", "") or ""
-        nombre_arch = Path(main_file).name.lower()
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        ctx = get_script_run_ctx()
+        if ctx and getattr(ctx, "main_script_path", None):
+            nombre_arch = Path(ctx.main_script_path).name.lower()
     except Exception:
         nombre_arch = ""
 
+    if not nombre_arch:
+        try:
+            main_mod = sys.modules.get("__main__")
+            main_file = getattr(main_mod, "__file__", "") or ""
+            nombre_arch = Path(main_file).name.lower()
+        except Exception:
+            nombre_arch = ""
+
+    mod_detectado = "inicio"
     if "1_registro" in nombre_arch:
-        return "1_registro"
-    if "2_panel" in nombre_arch:
-        return "2_panel"
-    if "3_matriculas" in nombre_arch:
-        return "3_matriculas"
-    if "4_homologaciones" in nombre_arch:
-        return "4_homologaciones"
-    if "5_proyeccion" in nombre_arch:
-        return "5_creditos"
-    return "inicio"
+        mod_detectado = "1_registro"
+    elif "2_panel" in nombre_arch:
+        mod_detectado = "2_panel"
+    elif "3_matriculas" in nombre_arch:
+        mod_detectado = "3_matriculas"
+    elif "4_homologaciones" in nombre_arch:
+        mod_detectado = "4_homologaciones"
+    elif "5_proyeccion" in nombre_arch:
+        mod_detectado = "5_creditos"
+
+    st.session_state["_modulo_script_raiz_fijo"] = mod_detectado
+    return mod_detectado
+
+
+def navegar_a_modulo(clave_mod: str) -> None:
+    """
+    Navega de forma segura y consistente hacia cualquiera de los módulos del sistema.
+    Funciona tanto si Streamlit se inició desde `app.py` como si en Streamlit Cloud
+    el Main file path apunta a `pages/3_Matriculas.py` u otra página.
+    """
+    if clave_mod not in MAPA_MODULOS_SISTEMA:
+        return
+
+    st.session_state["modulo_navegacion_activo"] = clave_mod
+    st.session_state["_navegacion_forzada"] = True
+    st.rerun()
 
 RUTA_CLAVES_LOCAL = Path(".streamlit/claves_docentes.json")
 
@@ -107,7 +137,7 @@ def inicializar_estado_sesion() -> None:
 
 
 def cerrar_sesion() -> None:
-    """Limpia la sesión actual y redirige al login."""
+    """Limpia la sesión actual y redirige al login en el Portal Principal."""
     for k in [
         "autenticado",
         "rol_usuario",
@@ -120,6 +150,7 @@ def cerrar_sesion() -> None:
     ]:
         if k in st.session_state:
             st.session_state[k] = False if k in {"autenticado", "forzar_cambio_clave"} else None
+    st.session_state["modulo_navegacion_activo"] = "inicio"
 
 
 def autenticar_usuario(usuario: str, clave: str) -> Tuple[bool, str]:
@@ -284,12 +315,11 @@ def cambiar_clave_docente(
 
 def renderizar_barra_sesion_y_login(modulo_actual: Optional[str] = None) -> bool:
     """
-    Renderiza en la barra lateral (`st.sidebar`) el menú universal de las 6 pestañas del sistema,
-    el estado de la sesión activa y el formulario para cambiar contraseña (si es docente),
-    o el formulario de inicio de sesión en la página principal si el usuario aún no se ha autenticado.
+    Renderiza tanto una barra superior horizontal fija como la barra lateral (`st.sidebar`) con las 6 pestañas
+    del sistema, el estado de la sesión activa y el formulario de inicio de sesión.
 
-    Funciona tanto si Streamlit se inició desde `app.py` como si en Streamlit Cloud
-    el Main file path apunta a `pages/3_Matriculas.py` o cualquier otra página.
+    Siempre arranca por defecto en `"inicio"` (Portal Principal `app.py`), incluso si en Streamlit Cloud
+    el Main file path fue configurado apuntando a `pages/3_Matriculas.py` o a cualquier otra página.
 
     Retorna `True` si el usuario está autenticado, `False` si aún debe iniciar sesión.
     """
@@ -297,18 +327,41 @@ def renderizar_barra_sesion_y_login(modulo_actual: Optional[str] = None) -> bool
 
     mod_raiz = _detectar_modulo_script_principal()
     mod_este_archivo = modulo_actual or mod_raiz
-    if "modulo_navegacion_activo" not in st.session_state or not st.session_state["modulo_navegacion_activo"]:
-        st.session_state["modulo_navegacion_activo"] = mod_este_archivo
-
-    # Si estamos ejecutando un módulo delegado mediante runpy, solo renderizamos la barra cuando
-    # estamos en el script raíz para no duplicar widgets en st.sidebar.
     en_delegacion = bool(st.session_state.get("_ejecutando_delegacion_modulo"))
 
+    # Siempre iniciar por defecto en el Portal Principal ("inicio") al abrir la aplicación por primera vez
+    if "modulo_navegacion_activo" not in st.session_state or not st.session_state["modulo_navegacion_activo"]:
+        st.session_state["modulo_navegacion_activo"] = "inicio"
+
     if not en_delegacion:
+        mod_activo = st.session_state.get("modulo_navegacion_activo", "inicio")
+
+        # 1. BARRA DE NAVEGACIÓN SUPERIOR VISIBLE SIEMPRE (INCLUSO SI EL SIDEBAR ESTÁ COLAPSADO)
+        with st.container(border=True):
+            cols_top = st.columns([1, 1.1, 1.1, 1.1, 1.1, 1.1, 0.9])
+            for idx_m, (clave_mod, (_, etiqueta_corta, _)) in enumerate(MAPA_MODULOS_SISTEMA.items()):
+                es_activo = (clave_mod == mod_activo)
+                with cols_top[idx_m]:
+                    if st.button(
+                        etiqueta_corta,
+                        key=f"btn_nav_top_{clave_mod}",
+                        type="primary" if es_activo else "secondary",
+                        use_container_width=True,
+                    ):
+                        navegar_a_modulo(clave_mod)
+
+            with cols_top[6]:
+                if st.session_state.get("autenticado"):
+                    if st.button("🚪 Salir", key="btn_logout_top", use_container_width=True, help="Cerrar sesión"):
+                        cerrar_sesion()
+                        st.rerun()
+                else:
+                    st.caption("🔒 Sin sesión")
+
+        # 2. MENÚ LATERAL (SIDEBAR)
         with st.sidebar:
             st.markdown("### 🧭 Módulos del Sistema")
-            mod_activo = st.session_state.get("modulo_navegacion_activo", mod_este_archivo)
-            for clave_mod, (etiqueta_mod, ruta_mod) in MAPA_MODULOS_SISTEMA.items():
+            for clave_mod, (etiqueta_mod, _, _) in MAPA_MODULOS_SISTEMA.items():
                 es_activo = (clave_mod == mod_activo)
                 if st.button(
                     etiqueta_mod,
@@ -316,15 +369,7 @@ def renderizar_barra_sesion_y_login(modulo_actual: Optional[str] = None) -> bool
                     type="primary" if es_activo else "secondary",
                     use_container_width=True,
                 ):
-                    st.session_state["modulo_navegacion_activo"] = clave_mod
-                    # Si `st.switch_page` funciona (cuando el entrypoint es app.py), úsalo;
-                    # si falla (ej. en Streamlit Cloud cuando el entrypoint es pages/3_Matriculas.py),
-                    # hace rerun y despacha el archivo con runpy.
-                    try:
-                        rel_path = "app.py" if clave_mod == "inicio" else f"pages/{ruta_mod.name}"
-                        st.switch_page(rel_path)
-                    except Exception:
-                        st.rerun()
+                    navegar_a_modulo(clave_mod)
 
             st.divider()
             st.markdown("### 🔐 Sesión de Usuario")
@@ -359,18 +404,55 @@ def renderizar_barra_sesion_y_login(modulo_actual: Optional[str] = None) -> bool
                             else:
                                 st.error(msg_c)
 
-                if st.button("🚪 Cerrar Sesión", use_container_width=True):
+                if st.button("🚪 Cerrar Sesión", key="btn_logout_sidebar", use_container_width=True):
                     cerrar_sesion()
                     st.rerun()
             else:
                 st.warning("No has iniciado sesión.")
 
-        # Si el usuario seleccionó en el menú lateral un módulo distinto al script raíz actual
-        # (por ejemplo, Streamlit Cloud arrancó en 3_Matriculas.py pero el usuario hizo clic en 1_Registro_Docente),
-        # ejecutamos dinámicamente el módulo elegido y detenemos el script actual.
-        mod_destino = st.session_state.get("modulo_navegacion_activo", mod_este_archivo)
+        # 3. SI AÚN NO HA INICIADO SESIÓN, MOSTRAR EL LOGIN ANTES DE CUALQUIER MÓDULO
+        if not st.session_state.get("autenticado"):
+            st.markdown("### 🎓 Sistema de Gestión Académica — UNAD (ECISA)")
+            col_l, col_center, col_r = st.columns([1, 1.6, 1])
+            with col_center:
+                with st.container(border=True):
+                    st.markdown("### 🔐 Ingreso al Sistema de Gestión Académica")
+                    st.markdown(
+                        """
+                        * **👨‍🏫 Docentes:** Ingresa tu **número de cédula** como Usuario y como Contraseña inicial (luego podrás cambiar tu clave en el menú lateral).
+                        * **👑 Administrador:** Ingresa con tus credenciales de administración (`admin`).
+                        """
+                    )
+                    with st.form("form_login_principal", clear_on_submit=False):
+                        inp_user = st.text_input(
+                            "Usuario (Cédula del Docente o `admin`)",
+                            placeholder="Ej: 72142321 o admin",
+                        )
+                        inp_pass = st.text_input(
+                            "Contraseña (Inicialmente tu número de cédula)",
+                            type="password",
+                            placeholder="Ingresa tu contraseña",
+                        )
+                        btn_login = st.form_submit_button(
+                            "🔓 Iniciar Sesión",
+                            type="primary",
+                            use_container_width=True,
+                        )
+
+                    if btn_login:
+                        ok_auth, msg_auth = autenticar_usuario(inp_user, inp_pass)
+                        if ok_auth:
+                            st.session_state["modulo_navegacion_activo"] = "inicio"
+                            st.success(msg_auth)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg_auth}")
+            return False
+
+        # 4. SI EL MÓDULO SELECCIONADO ES DISTINTO AL ARCHIVO RAÍZ ACTUAL, EJECUTARLO CON RUNPY
+        mod_destino = st.session_state.get("modulo_navegacion_activo", "inicio")
         if mod_destino != mod_este_archivo and mod_destino in MAPA_MODULOS_SISTEMA:
-            _, ruta_destino = MAPA_MODULOS_SISTEMA[mod_destino]
+            _, _, ruta_destino = MAPA_MODULOS_SISTEMA[mod_destino]
             if ruta_destino.exists():
                 orig_set_page_config = st.set_page_config
                 try:
@@ -382,46 +464,7 @@ def renderizar_barra_sesion_y_login(modulo_actual: Optional[str] = None) -> bool
                     st.session_state["_ejecutando_delegacion_modulo"] = False
                 st.stop()
 
-    if st.session_state.get("autenticado"):
-        return True
-
-    # Mostrar pantalla central de Login cuando no está autenticado
-    st.markdown("---")
-    col_l, col_center, col_r = st.columns([1, 1.6, 1])
-    with col_center:
-        with st.container(border=True):
-            st.markdown("### 🔐 Ingreso al Sistema de Gestión Académica")
-            st.markdown(
-                """
-                * **👨‍🏫 Docentes:** Ingresa tu **número de cédula** como Usuario y como Contraseña inicial (luego podrás cambiar tu clave en el menú lateral).
-                * **👑 Administrador:** Ingresa con tus credenciales de administración (`admin`).
-                """
-            )
-            with st.form("form_login_principal", clear_on_submit=False):
-                inp_user = st.text_input(
-                    "Usuario (Cédula del Docente o `admin`)",
-                    placeholder="Ej: 72142321 o admin",
-                )
-                inp_pass = st.text_input(
-                    "Contraseña (Inicialmente tu número de cédula)",
-                    type="password",
-                    placeholder="Ingresa tu contraseña",
-                )
-                btn_login = st.form_submit_button(
-                    "🔓 Iniciar Sesión",
-                    type="primary",
-                    use_container_width=True,
-                )
-
-            if btn_login:
-                ok_auth, msg_auth = autenticar_usuario(inp_user, inp_pass)
-                if ok_auth:
-                    st.success(msg_auth)
-                    st.rerun()
-                else:
-                    st.error(f"❌ {msg_auth}")
-
-    return False
+    return bool(st.session_state.get("autenticado"))
 
 
 def es_admin() -> bool:

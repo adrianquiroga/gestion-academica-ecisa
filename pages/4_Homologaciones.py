@@ -21,9 +21,10 @@ st.set_page_config(
     page_title="Módulo de Homologaciones - Fase 3",
     page_icon="🔄",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-if not renderizar_barra_sesion_y_login():
+if not renderizar_barra_sesion_y_login("4_homologaciones"):
     st.stop()
 
 st.title("🔄 Módulo de Homologaciones Internas y Externas")

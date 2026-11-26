@@ -147,6 +147,11 @@ def generar_pdf_ficha_docente(
     """
     Genera en memoria (`bytes`) la Ficha Individual / Hoja de Vida y Resolución de Vinculación de un docente.
     """
+    from src.services.docentes_svc import consolidar_estudios_docente, resumir_titulos_por_nivel
+
+    estudios = consolidar_estudios_docente(docente, estudios)
+    resumen_niveles = resumir_titulos_por_nivel(docente, estudios)
+
     nombre = docente.get("nombre_completo", "Docente")
     documento = docente.get("documento", "N/A")
     res_num = docente.get("resolucion_numero") or "S/N"
@@ -176,6 +181,10 @@ def generar_pdf_ficha_docente(
         ("Correo Institucional:", docente.get("correo_institucional", "-")),
         ("Correo Personal / Telefono:", f"{docente.get('email_personal') or '-'}  |  Tel: {docente.get('telefono') or '-'}"),
         ("Nivel Maximo de Formacion:", docente.get("nivel_formacion_maximo") or "-"),
+        ("Titulo(s) de Pregrado:", resumen_niveles.get("Pregrado", "-")),
+        ("Especializacion(es):", resumen_niveles.get("Especialización", "-")),
+        ("Maestria(s):", resumen_niveles.get("Maestría", "-")),
+        ("Doctorado(s):", resumen_niveles.get("Doctorado", "-")),
         ("Nivel de Ingles (MCER):", nivel_ing_mostrar),
         (
             "Soporte Certificado Ingles:",
@@ -187,7 +196,7 @@ def generar_pdf_ficha_docente(
         pdf.set_font("Helvetica", "B", 8.5)
         pdf.cell(52, 5.5, _texto_latin1(etiqueta), border=0)
         pdf.set_font("Helvetica", "", 8.5)
-        pdf.cell(0, 5.5, _texto_latin1(valor), border=0, new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, 5.5, _texto_latin1(valor), border=0, new_x="LMARGIN", new_y="NEXT")
 
     if docente.get("soporte_ingles_url"):
         pdf.set_font("Helvetica", "I", 8)
@@ -460,35 +469,50 @@ def generar_pdf_informe_consolidado(
 
     pdf.ln(4)
 
-    # 5. Listado Resumido de Docentes en la Consulta
+    # 5. Listado Resumido de Docentes en la Consulta (Incluyendo Títulos de Pregrado y Posgrado)
     if docentes_resumen:
-        pdf.seccion_titulo(f"5. Listado de Docentes en la Consulta Actual ({len(docentes_resumen)} registros)")
+        from src.services.docentes_svc import resumir_titulos_por_nivel
+
+        pdf.seccion_titulo(
+            f"5. Listado de Docentes y Titulos Academicos (Pregrado y Posgrados) ({len(docentes_resumen)} registros)"
+        )
         pdf.set_fill_color(0, 75, 135)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 7.5)
-        pdf.cell(23, 6.5, _texto_latin1("Documento"), border=1, fill=True)
-        pdf.cell(62, 6.5, _texto_latin1("Nombre Completo"), border=1, fill=True)
-        pdf.cell(24, 6.5, _texto_latin1("Formacion"), border=1, align="C", fill=True)
-        pdf.cell(22, 6.5, _texto_latin1("Ingles"), border=1, align="C", fill=True)
-        pdf.cell(39, 6.5, _texto_latin1("Centro"), border=1, fill=True)
-        pdf.cell(20, 6.5, _texto_latin1("Res. / Hrs"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
+        pdf.set_font("Helvetica", "B", 7)
+        pdf.cell(20, 6.5, _texto_latin1("Documento"), border=1, fill=True)
+        pdf.cell(44, 6.5, _texto_latin1("Nombre Completo"), border=1, fill=True)
+        pdf.cell(20, 6.5, _texto_latin1("Nivel Max."), border=1, align="C", fill=True)
+        pdf.cell(38, 6.5, _texto_latin1("Titulo Pregrado"), border=1, fill=True)
+        pdf.cell(52, 6.5, _texto_latin1("Titulos Posgrado (Esp / Maestria / Doc)"), border=1, fill=True)
+        pdf.cell(16, 6.5, _texto_latin1("Ingles"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
 
         pdf.set_text_color(30, 41, 59)
-        pdf.set_font("Helvetica", "", 7)
+        pdf.set_font("Helvetica", "", 6.5)
         for d in docentes_resumen[:120]:
-            doc_num = _texto_latin1(d.get("documento", "-"))[:14]
-            nom = _texto_latin1(d.get("nombre_completo", "-"))[:36]
-            form = _texto_latin1(d.get("nivel_formacion_maximo") or "-")[:14]
-            niv = _texto_latin1(d.get("nivel_ingles", "-"))[:12]
-            cen = _texto_latin1(d.get("centro_descripcion") or "-")[:22]
-            res_h = _texto_latin1(f"{d.get('resolucion_numero') or '-'} ({d.get('horas_vinculacion') or 0}h)")[:13]
+            res_tit = d.get("resumen_titulos") or resumir_titulos_por_nivel(d, d.get("docente_estudios"))
+            pre_txt = res_tit.get("Pregrado", "-")
+            pos_partes = []
+            if res_tit.get("Doctorado") and res_tit["Doctorado"] != "-":
+                pos_partes.append(f"Doc: {res_tit['Doctorado']}")
+            if res_tit.get("Maestría") and res_tit["Maestría"] != "-":
+                pos_partes.append(f"Mag: {res_tit['Maestría']}")
+            if res_tit.get("Especialización") and res_tit["Especialización"] != "-":
+                pos_partes.append(f"Esp: {res_tit['Especialización']}")
+            pos_txt = " | ".join(pos_partes) if pos_partes else "-"
 
-            pdf.cell(23, 6, doc_num, border=1)
-            pdf.cell(62, 6, nom, border=1)
-            pdf.cell(24, 6, form, border=1, align="C")
-            pdf.cell(22, 6, niv, border=1, align="C")
-            pdf.cell(39, 6, cen, border=1)
-            pdf.cell(20, 6, res_h, border=1, align="C", new_x="LMARGIN", new_y="NEXT")
+            doc_num = _texto_latin1(d.get("documento", "-"))[:13]
+            nom = _texto_latin1(d.get("nombre_completo", "-"))[:27]
+            form = _texto_latin1(d.get("nivel_formacion_maximo") or "-")[:12]
+            pre_cell = _texto_latin1(pre_txt)[:25]
+            pos_cell = _texto_latin1(pos_txt)[:35]
+            niv = _texto_latin1(d.get("nivel_ingles", "-"))[:10]
+
+            pdf.cell(20, 6, doc_num, border=1)
+            pdf.cell(44, 6, nom, border=1)
+            pdf.cell(20, 6, form, border=1, align="C")
+            pdf.cell(38, 6, pre_cell, border=1)
+            pdf.cell(52, 6, pos_cell, border=1)
+            pdf.cell(16, 6, niv, border=1, align="C", new_x="LMARGIN", new_y="NEXT")
 
     buffer = BytesIO()
     pdf.output(buffer)

@@ -289,19 +289,28 @@ def _es_texto_vacio_o_no_aplica(valor: Any) -> bool:
     if valor is None or (isinstance(valor, float) and pd.isna(valor)):
         return True
     txt = str(valor).strip().lower()
-    return txt in {
+    if txt in {
         "",
         "nan",
         "none",
         "no aplica",
         "ni aplica",
         "n/a",
+        "na",
+        "no",
+        "ninguno",
+        "ninguna",
         "no registra",
         "no regsitra",
         "sin informacion",
         "sin información",
         "-",
-    }
+        "--",
+    }:
+        return True
+    if txt.startswith("no tengo ") or txt.startswith("no posee ") or txt.startswith("no cuenta con "):
+        return True
+    return False
 
 
 def extraer_estudios_de_texto(texto_celda: Any, nivel_formacion: str) -> List[Dict[str, Any]]:
@@ -340,7 +349,7 @@ def extraer_estudios_de_texto(texto_celda: Any, nivel_formacion: str) -> List[Di
             universidad = "Por especificar (Importado de Resolución)"
 
         nivel_efectivo = nivel_formacion
-        if nivel_formacion == "Pregrado" and "tecnólog" in titulo.lower() or "tecnolog" in titulo.lower():
+        if nivel_formacion == "Pregrado" and ("tecnólog" in titulo.lower() or "tecnolog" in titulo.lower()):
             nivel_efectivo = "Tecnología"
 
         if titulo:
@@ -354,6 +363,106 @@ def extraer_estudios_de_texto(texto_celda: Any, nivel_formacion: str) -> List[Di
             )
 
     return estudios_extraidos
+
+
+def consolidar_estudios_docente(
+    docente: Optional[Dict[str, Any]],
+    estudios_rel: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Retorna la lista completa y ordenada de todos los títulos académicos de un docente
+    (Tecnología, Pregrado, Especialización, Maestría, Doctorado, Posdoctorado).
+    Combina los registros de `docente_estudios` con cualquier título presente en las columnas
+    de resumen del perfil (`formacion_profesional_texto`, `formacion_especializacion_texto`,
+    `formacion_maestria_texto`, `formacion_doctorado_texto`) que aún no esté desglosado,
+    evitando que en los reportes solo aparezca el título de pregrado.
+    """
+    estudios_base: List[Dict[str, Any]] = []
+    if estudios_rel is not None:
+        estudios_base = list(estudios_rel)
+    elif docente and isinstance(docente.get("docente_estudios"), list):
+        estudios_base = list(docente.get("docente_estudios") or [])
+
+    claves_vistas = set()
+    resultado: List[Dict[str, Any]] = []
+
+    for e in estudios_base:
+        niv = (e.get("nivel_formacion") or "Pregrado").strip()
+        tit = (e.get("titulo_obtenido") or "").strip()
+        if not tit:
+            continue
+        clave = (niv.lower(), tit.lower())
+        if clave not in claves_vistas:
+            claves_vistas.add(clave)
+            resultado.append(e)
+
+    if docente:
+        campos_respaldo = [
+            ("formacion_profesional_texto", "Pregrado"),
+            ("formacion_especializacion_texto", "Especialización"),
+            ("formacion_maestria_texto", "Maestría"),
+            ("formacion_doctorado_texto", "Doctorado"),
+        ]
+        for campo, nivel_def in campos_respaldo:
+            val_txt = docente.get(campo)
+            if val_txt and not _es_texto_vacio_o_no_aplica(val_txt):
+                for extra in extraer_estudios_de_texto(val_txt, nivel_def):
+                    clave = (
+                        extra["nivel_formacion"].strip().lower(),
+                        extra["titulo_obtenido"].strip().lower(),
+                    )
+                    if clave not in claves_vistas:
+                        claves_vistas.add(clave)
+                        resultado.append(extra)
+
+    orden_jerarquia = {
+        "Tecnología": 1,
+        "Pregrado": 2,
+        "Especialización": 3,
+        "Maestría": 4,
+        "Doctorado": 5,
+        "Posdoctorado": 6,
+    }
+    resultado.sort(key=lambda x: (orden_jerarquia.get(x.get("nivel_formacion", "Pregrado"), 9), x.get("titulo_obtenido", "")))
+    return resultado
+
+
+def resumir_titulos_por_nivel(
+    docente: Optional[Dict[str, Any]],
+    estudios_rel: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, str]:
+    """
+    Retorna un diccionario con los títulos agrupados por nivel:
+    `{'Pregrado': '...', 'Especialización': '...', 'Maestría': '...', 'Doctorado': '...'}`
+    para mostrarlos en las tablas, tarjetas y reportes PDF.
+    """
+    todos = consolidar_estudios_docente(docente, estudios_rel)
+    grupos: Dict[str, List[str]] = {
+        "Pregrado": [],
+        "Especialización": [],
+        "Maestría": [],
+        "Doctorado": [],
+    }
+    for e in todos:
+        niv = e.get("nivel_formacion") or "Pregrado"
+        tit = (e.get("titulo_obtenido") or "").strip()
+        univ = (e.get("universidad") or "").strip()
+        if not tit:
+            continue
+        etiqueta = f"{tit} ({univ})" if univ and "Por especificar" not in univ else tit
+        if niv in {"Pregrado", "Tecnología"}:
+            grupos["Pregrado"].append(etiqueta)
+        elif niv == "Especialización":
+            grupos["Especialización"].append(etiqueta)
+        elif niv == "Maestría":
+            grupos["Maestría"].append(etiqueta)
+        elif niv in {"Doctorado", "Posdoctorado"}:
+            grupos["Doctorado"].append(etiqueta)
+
+    return {
+        k: "; ".join(v) if v else "-"
+        for k, v in grupos.items()
+    }
 
 
 def _limpiar_fecha_iso(valor: Any) -> Optional[str]:
@@ -1235,6 +1344,8 @@ def listar_docentes_con_relaciones(
         for d in docentes:
             d["estado"] = obtener_estado_efectivo_docente(d)
             d["vigencia_contrato"] = etiqueta_vigencia_contrato(d)
+            d["docente_estudios"] = consolidar_estudios_docente(d, d.get("docente_estudios"))
+            d["resumen_titulos"] = resumir_titulos_por_nivel(d, d["docente_estudios"])
 
         if filtro_estado and filtro_estado not in {"Todos", "Todas"}:
             if filtro_estado == "VIGENTES":
