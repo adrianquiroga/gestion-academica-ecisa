@@ -1,10 +1,15 @@
 """
-Módulo 4 (Fase 3 Activa): Gestión, Analítica y Trazabilidad de Homologaciones 2026 (ECISA - UNAD).
-Procesa y visualiza los acuerdos de Consejo de Escuela de `Homologaciones 2026.xlsx` (corte noviembre de 2026):
-- KPIs de Homologaciones Estudiantiles (630 acuerdos), Estudiantes Únicos, Internas (UNAD), Convenio SENA y Otras IES, más 21 Acuerdos Normativos de Consejo de Escuela.
-- Gráficas interactivas por Programa a Cursar (Destino), Tipo/Institución de Origen (UNAD vs SENA vs Otras IES), Sesión de Consejo de Escuela, Centro Regional, Nivel de Formación de Origen y Programa de Origen.
-- Filtros combinados por Tipo (Interna/Externa), Programa a Cursar, Consejo de Escuela, Institución de Origen, Centro, Nivel y buscador por Estudiante / Documento / N° de Acuerdo.
-- Descarga de Informe Ejecutivo de Homologaciones 2026 en PDF (`fpdf2` en memoria).
+Módulo 4 (Fase 3 Activa): Seguimiento de Homologaciones y Tiempos de Respuesta 2026 (ECISA - ZCBC).
+Alimentado por el archivo oficial `Reporte_Tiempos_20261123_093339` (01/01/2026 al 23/11/2026):
+- KPIs de Estudios de Homologación (112 registros en ZCBC), Tipos (`int` Interna, `egr` Egresado/Convenio, `ext` Externa),
+  y Tiempos Promedio de Respuesta (Tiempo Total, Días Calendario, Tiempo Actores, Tiempo Administración y Tiempo Envío).
+- Analítica de tiempos por cada actor del flujo:
+  1. Líder Nacional de Homologación
+  2. Tutor Encargado
+  3. Líder Nacional de Programa
+- Gráficas interactivas por Programa Académico, Centro Regional (JAG, Zipaquirá, Soacha, Facatativá, Gachetá, Girardot, Fusagasugá, Chipaque),
+  Tipo de Homologación, Tutor Encargado y Evolución Mensual.
+- Descarga de Informe Ejecutivo de Seguimiento y Tiempos de Homologación en PDF (`fpdf2` en memoria).
 """
 
 import importlib
@@ -17,6 +22,7 @@ if str(ROOT_DIR) not in sys.path:
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from src.db.client import verificar_configuracion_supabase
 import src.services.homologaciones_svc as _hom_svc
@@ -27,8 +33,8 @@ importlib.reload(_hom_svc)
 importlib.reload(_pdf_svc)
 importlib.reload(_auth_mod)
 
-RUTA_EXCEL_HOMOLOGACIONES_DEFECTO = _hom_svc.RUTA_EXCEL_HOMOLOGACIONES_DEFECTO
 calcular_estadisticas_homologaciones = _hom_svc.calcular_estadisticas_homologaciones
+detectar_archivo_reporte_tiempos_local = _hom_svc.detectar_archivo_reporte_tiempos_local
 limpiar_cache_homologaciones = _hom_svc.limpiar_cache_homologaciones
 obtener_datos_homologaciones_2026 = _hom_svc.obtener_datos_homologaciones_2026
 sincronizar_homologaciones_a_supabase = _hom_svc.sincronizar_homologaciones_a_supabase
@@ -37,7 +43,7 @@ es_admin = _auth_mod.es_admin
 renderizar_barra_sesion_y_login = _auth_mod.renderizar_barra_sesion_y_login
 
 st.set_page_config(
-    page_title="Homologaciones 2026 - ECISA UNAD",
+    page_title="Seguimiento y Tiempos de Homologación 2026 - ECISA",
     page_icon="🔄",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -46,12 +52,17 @@ st.set_page_config(
 if not renderizar_barra_sesion_y_login("4_homologaciones"):
     st.stop()
 
+df_base, meta_rep = obtener_datos_homologaciones_2026()
+f_ini_corte = meta_rep.get("fecha_inicial_reporte", "01/01/2026")
+f_fin_corte = meta_rep.get("fecha_final_reporte", "23/11/2026")
+
 c_title, c_refresh = st.columns([4, 1])
 with c_title:
-    st.title("🔄 Gestión y Analítica de Homologaciones 2026 (ECISA)")
+    st.title("🔄 Seguimiento y Tiempos de Homologación 2026 (ECISA - ZCBC)")
     st.markdown(
-        "Trazabilidad de **Acuerdos de Homologación por Consejo de Escuela 2026** (corte al 23 de noviembre de 2026): "
-        "análisis por **Programa a Cursar, Tipo (Interna UNAD / Convenio SENA / Otras IES), Centro Regional, Programa de Origen y Acuerdos Normativos**."
+        f"**Informe Oficial de Seguimiento de Tiempos de Homologación** (Corte: **`{f_ini_corte}`** al **`{f_fin_corte}`** — "
+        f"Zona Centro Bogotá y Cundinamarca): análisis por **Actor (Líder Homologación, Tutor Encargado, Líder Programa), "
+        f"Programa Académico, Centro Regional y Tipo (`int`, `egr`, `ext`)**."
     )
 with c_refresh:
     st.write("")
@@ -63,37 +74,36 @@ usuario_es_admin = es_admin()
 
 ok_db, msg_db = verificar_configuracion_supabase()
 if not ok_db:
-    st.warning(f"⚠️ Aviso de conexión a Supabase: {msg_db}. Se utilizará la base local sincronizada.")
-
-df_hom_base, df_ac_base = obtener_datos_homologaciones_2026()
+    st.warning(f"⚠️ Aviso de conexión a Supabase: {msg_db}. Visualizando desde caché sincronizada.")
 
 # =============================================================================
-# 0. PANEL DESPLEGABLE DE CARGA / SINCRONIZACIÓN DE `Homologaciones 2026.xlsx` (SOLO ADMIN)
+# 0. PANEL DESPLEGABLE: SINCRONIZACIÓN DE `Reporte_Tiempos_20261123_093339` (SOLO ADMIN)
 # =============================================================================
 if usuario_es_admin:
     with st.expander(
-        "📥 Cargar / Sincronizar `Homologaciones 2026.xlsx` con Supabase (Solo Admin)",
-        expanded=df_hom_base.empty,
+        "📥 Cargar / Sincronizar `Reporte_Tiempos_20261123_093339` con Supabase (Solo Admin)",
+        expanded=df_base.empty,
     ):
         st.markdown(
             """
-            Este importador procesa automáticamente la matriz oficial **`Homologaciones 2026.xlsx`**:
-            * **Limpieza inteligente:** Une automáticamente las filas donde el nombre del programa de origen se partió en dos líneas y corrige las filas donde `Nombre` e `Identidad` venían invertidos.
-            * **Clasificación automática:** Identifica homologaciones **Internas (UNAD)**, **Externas por Convenio SENA** y **Externas de otras Universidades/IES**, además de separar los **Acuerdos Normativos/Generales de Consejo de Escuela**.
+            Este importador procesa directamente el reporte oficial del sistema de homologaciones (**`Reporte_Tiempos_20261123_093339`** en formato `.csv` o `.xlsx`),
+            corrigiendo tildes/UTF-8 y desglosando los **4 actores del proceso** (*Estudiante, Líder Nacional de Homologación, Tutor Encargado y Líder Nacional de Programa*)
+            junto con los indicadores de **`Tiempo actores`**, **`Tiempo admon`**, **`Tiempo Envio`**, **`Tiempo Total`** y **`dias`**.
             """
         )
         col_loc, col_up = st.columns(2)
 
         with col_loc:
-            if RUTA_EXCEL_HOMOLOGACIONES_DEFECTO.exists():
-                st.info(f"📂 Archivo detectado en el proyecto: **`{RUTA_EXCEL_HOMOLOGACIONES_DEFECTO}`**")
+            ruta_local = detectar_archivo_reporte_tiempos_local()
+            if ruta_local is not None:
+                st.info(f"📂 Archivo detectado en `datos_locales`: **`{ruta_local}`**")
                 if st.button(
-                    "🚀 Sincronizar `Homologaciones 2026.xlsx` con Supabase",
+                    f"🚀 Sincronizar `{ruta_local.name}` con Supabase",
                     type="primary",
                     use_container_width=True,
                 ):
-                    with st.spinner("Procesando acuerdos de Consejo de Escuela y sincronizando con Supabase..."):
-                        ok_s, n_h, n_a, msg_s = sincronizar_homologaciones_a_supabase(None, reemplazar_existentes=True)
+                    with st.spinner("Sincronizando Reporte de Tiempos de Homologación con Supabase..."):
+                        ok_s, n_s, msg_s = sincronizar_homologaciones_a_supabase(None, reemplazar_existentes=True)
                     if ok_s:
                         st.success(f"✅ {msg_s}")
                         st.rerun()
@@ -101,19 +111,19 @@ if usuario_es_admin:
                         st.warning(f"⚠️ {msg_s}")
                         st.rerun()
             else:
-                st.info("Puedes subir una nueva versión de `Homologaciones 2026.xlsx` en el panel de la derecha 👉.")
+                st.info("Sube un archivo `Reporte_Tiempos` en el panel de la derecha 👉.")
 
         with col_up:
-            excel_subido = st.file_uploader(
-                "O sube una versión actualizada de `Homologaciones 2026.xlsx`:",
-                type=["xlsx", "xls"],
-                key="uploader_homologaciones_2026",
+            archivo_subido = st.file_uploader(
+                "O sube un nuevo archivo `Reporte_Tiempos` (.csv o .xlsx):",
+                type=["csv", "xlsx", "xls"],
+                key="uploader_reporte_tiempos_hom",
             )
-            if excel_subido is not None:
-                if st.button("📥 Procesar y Sincronizar Archivo Subido", type="primary", use_container_width=True):
+            if archivo_subido is not None:
+                if st.button("📥 Procesar y Guardar Reporte Subido", type="primary", use_container_width=True):
                     with st.spinner("Procesando archivo subido y actualizando Supabase..."):
-                        ok_u, n_hu, n_au, msg_u = sincronizar_homologaciones_a_supabase(
-                            excel_subido,
+                        ok_u, n_u, msg_u = sincronizar_homologaciones_a_supabase(
+                            archivo_subido,
                             reemplazar_existentes=True,
                         )
                     if ok_u:
@@ -123,84 +133,66 @@ if usuario_es_admin:
                         st.warning(f"⚠️ {msg_u}")
                         st.rerun()
 
-if df_hom_base.empty:
+if df_base.empty:
     st.info(
-        "💡 Aún no hay registros de homologaciones cargados. "
-        "Abre el panel superior **'📥 Cargar / Sincronizar Homologaciones 2026.xlsx'** para importar la base."
+        "💡 Aún no hay registros cargados. Abre el panel superior para sincronizar `Reporte_Tiempos_20261123_093339`."
     )
     st.stop()
 
 # =============================================================================
-# 1. FILTROS INTERACTIVOS Y DESCARGA DE INFORME PDF
+# 1. FILTROS COMBINADOS Y DESCARGA DE INFORME EJECUTIVO PDF
 # =============================================================================
-st.markdown("### 🔎 Filtros de Consulta y Reporte Ejecutivo PDF")
+st.markdown("### 🔎 Filtros de Consulta por Tipo, Programa, Centro, Tutor y Líder de Programa")
 
-f1, f2, f3, f4, f5 = st.columns([1.05, 1.45, 1.35, 1.35, 1.1])
+f1, f2, f3, f4, f5 = st.columns([1.05, 1.45, 1.25, 1.25, 1.25])
 
-tipos_disp = ["Todos", "Interna (UNAD)", "Externa (SENA + Otras IES)", "Solo Convenio SENA", "Solo Otras Universidades / IES"]
-progs_disp = ["Todos"] + sorted(df_hom_base["programa_destino"].dropna().unique().tolist())
-consejos_disp = ["Todos"] + sorted(df_hom_base["consejo_escuela"].dropna().unique().tolist())
-centros_disp = ["Todos"] + sorted(df_hom_base["centro"].dropna().unique().tolist())
-niveles_disp = ["Todos"] + sorted(df_hom_base["nivel_origen"].dropna().unique().tolist())
+tipos_disp = ["Todos"] + sorted(df_base["tipo_homologacion"].dropna().unique().tolist())
+progs_disp = ["Todos"] + sorted(df_base["programa_destino"].dropna().unique().tolist())
+centros_disp = ["Todos"] + sorted(df_base["centro"].dropna().unique().tolist())
+tutores_disp = ["Todos"] + sorted(df_base["tutor_nombre"].dropna().unique().tolist())
+lideres_disp = ["Todos"] + sorted(df_base["lider_programa_nombre"].dropna().unique().tolist())
 
 with f1:
-    sel_tipo = st.selectbox("Tipo / Origen", options=tipos_disp)
+    sel_tipo = st.selectbox("Tipo (`int` / `egr` / `ext`)", options=tipos_disp)
 with f2:
-    sel_prog_dest = st.selectbox("Programa a Cursar (ECISA)", options=progs_disp)
+    sel_prog = st.selectbox("Programa Académico (ECISA)", options=progs_disp)
 with f3:
-    sel_consejo = st.selectbox("Consejo de Escuela", options=consejos_disp)
+    sel_centro = st.selectbox("Centro Regional (ZCBC)", options=centros_disp)
 with f4:
-    sel_centro = st.selectbox("Centro Regional", options=centros_disp)
+    sel_tutor = st.selectbox("Tutor Encargado", options=tutores_disp)
 with f5:
-    sel_nivel = st.selectbox("Nivel de Origen", options=niveles_disp)
+    sel_lider_prog = st.selectbox("Líder Nacional de Programa", options=lideres_disp)
 
 c_busq, c_pdf = st.columns([3.2, 1.3])
 with c_busq:
     busq_txt = st.text_input(
-        "Buscar por Nombre del Estudiante, Documento (Identidad), Número de Acuerdo, Programa o Universidad de Origen:",
-        placeholder="Ej: 1083910506, Rosero, ACUERDO NÚMERO 639, SENA, Regencia...",
+        "Buscar por ID de Homologación (`Idhomologacion`), Documento o Nombre del Estudiante:",
+        placeholder="Ej: 39232, 1082746042, DELGADO TELLO...",
     )
 
-# Aplicar filtros al DataFrame
-df_filtrado = df_hom_base.copy()
-
-if sel_tipo == "Interna (UNAD)":
-    df_filtrado = df_filtrado[df_filtrado["tipo"] == "Interna"]
-elif sel_tipo == "Externa (SENA + Otras IES)":
-    df_filtrado = df_filtrado[df_filtrado["tipo"] == "Externa"]
-elif sel_tipo == "Solo Convenio SENA":
-    df_filtrado = df_filtrado[df_filtrado["institucion_origen"].str.contains("SENA", case=False, na=False)]
-elif sel_tipo == "Solo Otras Universidades / IES":
-    df_filtrado = df_filtrado[
-        (df_filtrado["tipo"] == "Externa")
-        & (~df_filtrado["institucion_origen"].str.contains("SENA", case=False, na=False))
-    ]
-
-if sel_prog_dest != "Todos":
-    df_filtrado = df_filtrado[df_filtrado["programa_destino"] == sel_prog_dest]
-
-if sel_consejo != "Todos":
-    df_filtrado = df_filtrado[df_filtrado["consejo_escuela"] == sel_consejo]
-
+df_filtrado = df_base.copy()
+if sel_tipo != "Todos":
+    df_filtrado = df_filtrado[df_filtrado["tipo_homologacion"] == sel_tipo]
+if sel_prog != "Todos":
+    df_filtrado = df_filtrado[df_filtrado["programa_destino"] == sel_prog]
 if sel_centro != "Todos":
     df_filtrado = df_filtrado[df_filtrado["centro"] == sel_centro]
-
-if sel_nivel != "Todos":
-    df_filtrado = df_filtrado[df_filtrado["nivel_origen"] == sel_nivel]
+if sel_tutor != "Todos":
+    df_filtrado = df_filtrado[df_filtrado["tutor_nombre"] == sel_tutor]
+if sel_lider_prog != "Todos":
+    df_filtrado = df_filtrado[df_filtrado["lider_programa_nombre"] == sel_lider_prog]
 
 if busq_txt and busq_txt.strip():
     term = busq_txt.strip().lower()
     mask = (
-        df_filtrado["nombre_estudiante"].astype(str).str.lower().str.contains(term, na=False)
+        df_filtrado["id_homologacion"].astype(str).str.lower().str.contains(term, na=False)
         | df_filtrado["documento_estudiante"].astype(str).str.lower().str.contains(term, na=False)
-        | df_filtrado["acuerdo"].astype(str).str.lower().str.contains(term, na=False)
-        | df_filtrado["programa_origen"].astype(str).str.lower().str.contains(term, na=False)
-        | df_filtrado["institucion_origen"].astype(str).str.lower().str.contains(term, na=False)
-        | df_filtrado["snies_origen"].astype(str).str.lower().str.contains(term, na=False)
+        | df_filtrado["nombre_estudiante"].astype(str).str.lower().str.contains(term, na=False)
+        | df_filtrado["tutor_nombre"].astype(str).str.lower().str.contains(term, na=False)
     )
     df_filtrado = df_filtrado[mask]
 
-stats = calcular_estadisticas_homologaciones(df_filtrado, df_ac_base)
+stats = calcular_estadisticas_homologaciones(df_filtrado)
 
 with c_pdf:
     st.write("")
@@ -211,54 +203,80 @@ with c_pdf:
     st.download_button(
         label="📥 Descargar Informe PDF",
         data=pdf_bytes,
-        file_name="Informe_Homologaciones_2026_ECISA.pdf",
+        file_name="Informe_Tiempos_Homologaciones_2026_ECISA.pdf",
         mime="application/pdf",
         type="primary",
         use_container_width=True,
     )
 
 # =============================================================================
-# 2. INDICADORES CLAVE (KPIs)
+# 2. INDICADORES CLAVE (KPIs DE VOLUMEN Y TIEMPOS DE RESPUESTA)
 # =============================================================================
-total_h = stats["total_homologaciones"]
-pct_int = (stats["total_internas"] / total_h * 100.0) if total_h else 0.0
-pct_sena = (stats["total_sena"] / total_h * 100.0) if total_h else 0.0
-pct_otras = (stats["total_otras_ies"] / total_h * 100.0) if total_h else 0.0
-
 k1, k2, k3, k4, k5, k6 = st.columns(6)
-k1.metric("📜 Acuerdos Homologación", f"{total_h:,}".replace(",", "."), delta=f"{stats['total_consejos']} Consejos de Escuela", delta_color="off")
-k2.metric("👨‍🎓 Estudiantes Únicos", f"{stats['estudiantes_unicos']:,}".replace(",", "."))
-k3.metric("🏛️ Internas (UNAD)", f"{stats['total_internas']:,}".replace(",", "."), delta=f"{pct_int:.1f}% del total", delta_color="off")
-k4.metric("🤝 Convenio SENA", f"{stats['total_sena']:,}".replace(",", "."), delta=f"{pct_sena:.1f}% del total", delta_color="off")
-k5.metric("🎓 Otras Universidades", f"{stats['total_otras_ies']:,}".replace(",", "."), delta=f"{pct_otras:.1f}% del total", delta_color="off")
-k6.metric("⚖️ Acuerdos Normativos", f"{stats['total_acuerdos_generales']}", delta="Aplazamientos / Rutas", delta_color="off")
+k1.metric(
+    "🗂️ Total Homologaciones",
+    f"{stats['total_homologaciones']}",
+    delta=f"{stats['estudiantes_unicos']} estudiantes únicos",
+    delta_color="off",
+)
+k2.metric(
+    "🏛️ Internas (`int`)",
+    f"{stats['total_int']}",
+    delta=f"{(stats['total_int'] / max(stats['total_homologaciones'], 1) * 100):.1f}% del total",
+    delta_color="off",
+)
+k3.metric(
+    "🎓 Egresados / Conv. (`egr`)",
+    f"{stats['total_egr']}",
+    delta=f"{(stats['total_egr'] / max(stats['total_homologaciones'], 1) * 100):.1f}% del total",
+    delta_color="off",
+)
+k4.metric(
+    "🌐 Externas (`ext`)",
+    f"{stats['total_ext']}",
+    delta=f"{(stats['total_ext'] / max(stats['total_homologaciones'], 1) * 100):.1f}% del total",
+    delta_color="off",
+)
+k5.metric(
+    "⏱️ Tiempo Total Promedio",
+    f"{stats['promedio_tiempo_total']} días",
+    delta=f"Calendario: {stats['promedio_dias_calendario']} días",
+    delta_color="off",
+)
+k6.metric(
+    "⚙️ Actores vs Admon",
+    f"{stats['promedio_tiempo_actores']}d / {stats['promedio_tiempo_admon']}d",
+    delta=f"Líder: {stats['promedio_lider_hom']}d | Tutor: {stats['promedio_tutor']}d | Prog: {stats['promedio_lider_prog']}d",
+    delta_color="off",
+)
 
 st.divider()
 
 # =============================================================================
-# 3. GRÁFICAS EJECUTIVAS INTERACTIVAS (PLOTLY)
+# 3. GRÁFICAS EJECUTIVAS DE VOLUMEN Y TIEMPOS (PLOTLY)
 # =============================================================================
 g1, g2 = st.columns([1.45, 1])
 
 with g1:
-    if stats["por_programa_destino"]:
-        df_g_prog = pd.DataFrame(
-            sorted(stats["por_programa_destino"].items(), key=lambda x: x[1], reverse=True),
-            columns=["Programa a Cursar (ECISA)", "Homologaciones"],
-        )
+    df_prog_t = stats["df_programas_tiempos"]
+    if not df_prog_t.empty:
         fig_prog = px.bar(
-            df_g_prog,
+            df_prog_t,
             x="Homologaciones",
-            y="Programa a Cursar (ECISA)",
+            y="programa_destino",
             orientation="h",
-            text="Homologaciones",
-            title="Homologaciones Aprobadas por Programa a Cursar en ECISA (Destino)",
-            color="Programa a Cursar (ECISA)",
-            color_discrete_sequence=px.colors.sequential.Blues_r,
+            text=df_prog_t.apply(
+                lambda r: f"{int(r['Homologaciones'])} est. (Prom: {r['Prom_Total']} días)",
+                axis=1,
+            ),
+            title="Homologaciones y Tiempo Total Promedio por Programa Académico (ECISA)",
+            color="Prom_Total",
+            color_continuous_scale="Blues",
         )
         fig_prog.update_layout(
-            showlegend=False,
-             yaxis=dict(autorange="reversed"),
+            yaxis=dict(autorange="reversed", title=""),
+            xaxis_title="Cantidad de Homologaciones",
+            coloraxis_colorbar=dict(title="Días Prom."),
             height=360,
             margin=dict(t=45, b=20, l=20, r=20),
         )
@@ -267,20 +285,20 @@ with g1:
 with g2:
     if stats["por_tipo"]:
         df_g_tipo = pd.DataFrame(
-            [(k, v) for k, v in stats["por_tipo"].items() if v > 0],
-            columns=["Origen de Homologación", "Cantidad"],
+            list(stats["por_tipo"].items()),
+            columns=["Tipo de Homologación", "Cantidad"],
         )
         fig_tipo = px.pie(
             df_g_tipo,
-            names="Origen de Homologación",
+            names="Tipo de Homologación",
             values="Cantidad",
             hole=0.45,
-            title="Distribución por Tipo e Institución de Origen",
+            title="Distribución por Tipo de Homologación (int / egr / ext)",
             color_discrete_sequence=["#004B87", "#0284C7", "#38BDF8"],
         )
         fig_tipo.update_traces(textposition="inside", textinfo="percent+value")
         fig_tipo.update_layout(
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="center", x=0.5),
             height=360,
             margin=dict(t=45, b=40, l=20, r=20),
         )
@@ -289,201 +307,240 @@ with g2:
 g3, g4 = st.columns(2)
 
 with g3:
-    if stats["por_consejo"]:
-        df_g_cons = pd.DataFrame(
-            sorted(stats["por_consejo"].items(), key=lambda x: x[0]),
-            columns=["Consejo de Escuela", "Acuerdos"],
-        )
-        fig_cons = px.bar(
-            df_g_cons,
-            x="Acuerdos",
-            y="Consejo de Escuela",
-            orientation="h",
-            text="Acuerdos",
-            title="Evolución de Acuerdos por Sesión de Consejo de Escuela (2026)",
-            color="Acuerdos",
-            color_continuous_scale="Blues",
-        )
-        fig_cons.update_layout(
-            coloraxis_showscale=False,
-            height=360,
-            margin=dict(t=45, b=20, l=20, r=20),
-        )
-        st.plotly_chart(fig_cons, use_container_width=True)
-
-with g4:
-    if stats["por_centro"]:
-        df_g_cen = pd.DataFrame(
-            sorted(stats["por_centro"].items(), key=lambda x: x[1], reverse=True)[:15],
-            columns=["Centro Regional", "Homologaciones"],
-        )
+    df_cen_t = stats["df_centros_tiempos"]
+    if not df_cen_t.empty:
         fig_cen = px.bar(
-            df_g_cen,
+            df_cen_t,
             x="Homologaciones",
-            y="Centro Regional",
+            y="centro",
             orientation="h",
-            text="Homologaciones",
-            title="Top 15 Centros Regionales con Mayor Número de Homologaciones",
-            color="Centro Regional",
+            text=df_cen_t.apply(
+                lambda r: f"{int(r['Homologaciones'])} ({r['Prom_Total']} d)",
+                axis=1,
+            ),
+            title="Homologaciones y Tiempo Promedio por Centro Regional (ZCBC)",
+            color="centro",
             color_discrete_sequence=px.colors.qualitative.Safe,
         )
         fig_cen.update_layout(
             showlegend=False,
-            yaxis=dict(autorange="reversed"),
-            height=360,
+            yaxis=dict(autorange="reversed", title=""),
+            xaxis_title="Homologaciones",
+            height=350,
             margin=dict(t=45, b=20, l=20, r=20),
         )
         st.plotly_chart(fig_cen, use_container_width=True)
 
-g5, g6 = st.columns([1.35, 1])
+with g4:
+    # Desglose comparativo de tiempos promedio por etapa y actor
+    etapas_df = pd.DataFrame(
+        [
+            {"Etapa / Actor": "1. Líder Nac. Homologación", "Días Promedio": stats["promedio_lider_hom"]},
+            {"Etapa / Actor": "2. Tutor Encargado", "Días Promedio": stats["promedio_tutor"]},
+            {"Etapa / Actor": "3. Líder Nac. Programa", "Días Promedio": stats["promedio_lider_prog"]},
+            {"Etapa / Actor": "4. Tiempo Administración", "Días Promedio": stats["promedio_tiempo_admon"]},
+            {"Etapa / Actor": "5. Tiempo Envío", "Días Promedio": stats["promedio_tiempo_envio"]},
+            {"Etapa / Actor": "TOTAL TRÁMITE (Tiempo Total)", "Días Promedio": stats["promedio_tiempo_total"]},
+        ]
+    )
+    fig_tiempos = px.bar(
+        etapas_df,
+        x="Días Promedio",
+        y="Etapa / Actor",
+        orientation="h",
+        text="Días Promedio",
+        title="Desglose del Tiempo Promedio de Respuesta por Actor y Etapa (Días)",
+        color="Etapa / Actor",
+        color_discrete_sequence=["#38BDF8", "#0284C7", "#0369A1", "#64748B", "#94A3B8", "#004B87"],
+    )
+    fig_tiempos.update_layout(
+        showlegend=False,
+        yaxis=dict(autorange="reversed", title=""),
+        height=350,
+        margin=dict(t=45, b=20, l=20, r=20),
+    )
+    st.plotly_chart(fig_tiempos, use_container_width=True)
+
+g5, g6 = st.columns(2)
 
 with g5:
-    if stats["por_programa_origen"]:
-        df_g_porig = pd.DataFrame(
-            sorted(stats["por_programa_origen"].items(), key=lambda x: x[1], reverse=True)[:12],
-            columns=["Programa de Origen", "Homologaciones"],
+    df_tut = stats["df_tutores"]
+    if not df_tut.empty:
+        fig_tut = go.Figure()
+        fig_tut.add_trace(
+            go.Bar(
+                name="Homologaciones Asignadas",
+                y=df_tut["tutor_nombre"],
+                x=df_tut["Homologaciones"],
+                orientation="h",
+                text=df_tut.apply(
+                    lambda r: f"{int(r['Homologaciones'])} est. (Tutor: {r['Promedio_Dias_Tutor']}d)",
+                    axis=1,
+                ),
+                textposition="auto",
+                marker_color="#004B87",
+            )
         )
-        fig_porig = px.bar(
-            df_g_porig,
-            x="Homologaciones",
-            y="Programa de Origen",
-            orientation="h",
-            text="Homologaciones",
-            title="Top 12 Programas Académicos de Origen más Homologados",
-            color="Homologaciones",
-            color_continuous_scale="Tealgrn",
-        )
-        fig_porig.update_layout(
-            coloraxis_showscale=False,
-            yaxis=dict(autorange="reversed"),
-            height=350,
+        fig_tut.update_layout(
+            title="Carga y Tiempo Promedio de Respuesta por Tutor Encargado",
+            yaxis=dict(autorange="reversed", title=""),
+            xaxis_title="Estudios de Homologación",
+            height=380,
             margin=dict(t=45, b=20, l=20, r=20),
         )
-        st.plotly_chart(fig_porig, use_container_width=True)
+        st.plotly_chart(fig_tut, use_container_width=True)
 
 with g6:
-    if stats["por_nivel_origen"]:
-        df_g_niv = pd.DataFrame(
-            sorted(stats["por_nivel_origen"].items(), key=lambda x: x[1], reverse=True),
-            columns=["Nivel de Formación de Origen", "Homologaciones"],
+    if stats["por_mes"]:
+        df_mes = pd.DataFrame(
+            list(stats["por_mes"].items()),
+            columns=["Mes de Aprobación (2026)", "Homologaciones"],
         )
-        fig_niv = px.bar(
-            df_g_niv,
-            x="Nivel de Formación de Origen",
+        fig_mes = px.bar(
+            df_mes,
+            x="Mes de Aprobación (2026)",
             y="Homologaciones",
             text="Homologaciones",
-            title="Distribución por Nivel de Formación de Origen",
-            color="Nivel de Formación de Origen",
-            color_discrete_sequence=px.colors.qualitative.Pastel,
+            title="Evolución Mensual de Homologaciones Aprobadas (Ene - Nov 2026)",
+            color="Homologaciones",
+            color_continuous_scale="Blues",
         )
-        fig_niv.update_layout(
-            showlegend=False,
-            height=350,
+        fig_mes.update_layout(
+            coloraxis_showscale=False,
+            height=380,
             margin=dict(t=45, b=20, l=20, r=20),
         )
-        st.plotly_chart(fig_niv, use_container_width=True)
+        st.plotly_chart(fig_mes, use_container_width=True)
 
 st.divider()
 
 # =============================================================================
-# 4. PESTAÑAS DE DETALLE: ACUERDOS ESTUDIANTILES, RESUMEN POR IES Y ACUERDOS NORMATIVOS
+# 4. TABLAS DETALLADAS DE TRAZABILIDAD Y TIEMPOS POR ACTOR
 # =============================================================================
-tab_est, tab_univ, tab_norm = st.tabs(
+tab_det, tab_actores, tab_prog_cen = st.tabs(
     [
-        f"👨‍🎓 1. Directorio de Acuerdos de Homologación Estudiantil ({len(df_filtrado)})",
-        "🏛️ 2. Consolidado por Universidad / Institución de Origen",
-        f"⚖️ 3. Acuerdos Normativos y Generales de Consejo de Escuela ({len(df_ac_base)})",
+        f"📋 1. Sábana Completa de Seguimiento y Tiempos ({len(df_filtrado)} estudios)",
+        "👨‍🏫 2. Desempeño por Tutor Encargado y Líder Nacional de Programa",
+        "🏛️ 3. Consolidado por Programa Académico y Centro Regional",
     ]
 )
 
-with tab_est:
+with tab_det:
     if not usuario_es_admin:
         st.info(
-            "🔒 **Nota de Privacidad:** La tabla detallada con números de documento de identidad de estudiantes "
-            "está reservada para el rol **Administrador (`admin`)**."
+            "🔒 **Nota de Privacidad:** La consulta detallada con números de identificación de estudiantes "
+            "está reservada para el usuario **Administrador (`admin`)**."
         )
     else:
         if df_filtrado.empty:
-            st.warning("No se encontraron acuerdos de homologación con los filtros seleccionados.")
+            st.warning("No se encontraron estudios de homologación con los filtros seleccionados.")
         else:
-            df_mostrar = df_filtrado[
+            df_show = df_filtrado[
                 [
-                    "numero_acuerdo",
-                    "consejo_escuela",
-                    "acuerdo",
-                    "fecha_resolucion",
+                    "id_homologacion",
                     "documento_estudiante",
                     "nombre_estudiante",
                     "programa_destino",
                     "centro",
-                    "programa_origen",
-                    "snies_origen",
-                    "nivel_origen",
-                    "institucion_origen",
-                    "tipo",
+                    "tipo_homologacion",
+                    "lider_homologacion_nombre",
+                    "tiempo_lider_hom",
+                    "tutor_nombre",
+                    "tiempo_tutor",
+                    "lider_programa_nombre",
+                    "tiempo_lider_prog",
+                    "fecha_aprobacion",
+                    "fecha_envio",
+                    "tiempo_envio",
+                    "tiempo_actores",
+                    "tiempo_admon",
+                    "tiempo_total",
+                    "dias_calendario",
                 ]
             ].rename(
                 columns={
-                    "numero_acuerdo": "N° Ac.",
-                    "consejo_escuela": "Consejo de Escuela",
-                    "acuerdo": "Acuerdo de Homologación",
-                    "fecha_resolucion": "Fecha Acuerdo",
-                    "documento_estudiante": "Identidad (Documento)",
-                    "nombre_estudiante": "Nombre del Estudiante",
-                    "programa_destino": "Programa a Cursar (ECISA)",
+                    "id_homologacion": "ID Homolog.",
+                    "documento_estudiante": "Identificación",
+                    "nombre_estudiante": "Estudiante",
+                    "programa_destino": "Programa Académico",
                     "centro": "Centro Regional",
-                    "programa_origen": "Programa de Origen",
-                    "snies_origen": "SNIES Origen",
-                    "nivel_origen": "Nivel Origen",
-                    "institucion_origen": "Universidad / Institución de Origen",
-                    "tipo": "Tipo",
+                    "tipo_homologacion": "Tipo",
+                    "lider_homologacion_nombre": "Líder Nac. Homologación",
+                    "tiempo_lider_hom": "Días Líder Hom.",
+                    "tutor_nombre": "Tutor Encargado",
+                    "tiempo_tutor": "Días Tutor",
+                    "lider_programa_nombre": "Líder Nac. Programa",
+                    "tiempo_lider_prog": "Días Líder Prog.",
+                    "fecha_aprobacion": "Fecha Aprobación",
+                    "fecha_envio": "Fecha Envío",
+                    "tiempo_envio": "T. Envío",
+                    "tiempo_actores": "T. Actores",
+                    "tiempo_admon": "T. Admon",
+                    "tiempo_total": "Tiempo Total (d)",
+                    "dias_calendario": "Días Cal.",
                 }
             )
-            st.dataframe(df_mostrar, use_container_width=True, hide_index=True, height=460)
+            st.dataframe(df_show, use_container_width=True, hide_index=True, height=450)
 
-with tab_univ:
-    if df_filtrado.empty:
-        st.info("Sin registros para agrupar.")
-    else:
-        df_u_grp = (
-            df_filtrado.groupby(["institucion_origen", "tipo", "nivel_origen"], as_index=False)
-            .agg(
-                Total_Homologaciones=("documento_estudiante", "count"),
-                Estudiantes_Unicos=("documento_estudiante", "nunique"),
-                Programas_Origen=("programa_origen", "nunique"),
-            )
-            .sort_values(by="Total_Homologaciones", ascending=False)
-            .reset_index(drop=True)
-        )
-        df_u_grp = df_u_grp.rename(
+with tab_actores:
+    c_t1, c_t2 = st.columns(2)
+    with c_t1:
+        st.markdown("##### 👨‍🏫 Tiempos por Tutor Encargado")
+        df_tut_show = stats["df_tutores"].rename(
             columns={
-                "institucion_origen": "Universidad / Institución de Origen",
-                "tipo": "Tipo de Homologación",
-                "nivel_origen": "Nivel de Formación",
-                "Total_Homologaciones": "Total Acuerdos",
-                "Estudiantes_Unicos": "Estudiantes Únicos",
-                "Programas_Origen": "Programas de Origen Distintos",
+                "tutor_nombre": "Tutor Encargado",
+                "Homologaciones": "Estudios Asignados",
+                "Promedio_Dias_Tutor": "Prom. Días Tutor",
+                "Max_Dias_Tutor": "Máx. Días Tutor",
+                "Promedio_Tiempo_Total": "Prom. Tiempo Total (d)",
             }
         )
-        st.dataframe(df_u_grp, use_container_width=True, hide_index=True)
+        st.dataframe(df_tut_show, use_container_width=True, hide_index=True)
 
-with tab_norm:
-    st.markdown(
-        "Acuerdos generales expedidos por el **Consejo de Escuela de Ciencias de la Salud (ECISA)** en 2026 "
-        "(solicitudes de aplazamiento de periodo, condiciones de homologación interna hacia posgrados, diplomados, prácticas y suficiencia por competencias):"
-    )
-    if df_ac_base.empty:
-        st.info("No hay acuerdos generales registrados.")
-    else:
-        df_ac_show = df_ac_base[
-            ["numero_acuerdo", "consejo_escuela", "acuerdo", "fecha_acuerdo", "asunto"]
-        ].rename(
+    with c_t2:
+        st.markdown("##### 🎓 Tiempos por Líder Nacional de Programa")
+        df_lp_show = stats["df_lideres_programa"].rename(
             columns={
-                "numero_acuerdo": "N° Acuerdo",
-                "consejo_escuela": "Consejo de Escuela",
-                "acuerdo": "Acuerdo",
-                "fecha_acuerdo": "Fecha",
-                "asunto": "Descripción / Objeto del Acuerdo",
+                "lider_programa_nombre": "Líder Nacional de Programa",
+                "Homologaciones": "Estudios Avalados",
+                "Promedio_Dias_Lider_Prog": "Prom. Días Líder Prog.",
+                "Max_Dias_Lider_Prog": "Máx. Días Líder Prog.",
+                "Promedio_Tiempo_Total": "Prom. Tiempo Total (d)",
             }
         )
-        st.dataframe(df_ac_show, use_container_width=True, hide_index=True)
+        st.dataframe(df_lp_show, use_container_width=True, hide_index=True)
+
+with tab_prog_cen:
+    c_p1, c_p2 = st.columns(2)
+    with c_p1:
+        st.markdown("##### 📚 Resumen por Programa Académico")
+        df_pr_show = stats["df_programas_tiempos"].rename(
+            columns={
+                "programa_destino": "Programa Académico",
+                "Homologaciones": "Total",
+                "Internas_int": "int",
+                "Egresados_egr": "egr",
+                "Externas_ext": "ext",
+                "Prom_Actores": "Prom. Actores (d)",
+                "Prom_Admon": "Prom. Admon (d)",
+                "Prom_Total": "Prom. Total (d)",
+                "Prom_Dias_Cal": "Prom. Días Cal.",
+            }
+        )
+        st.dataframe(df_pr_show, use_container_width=True, hide_index=True)
+
+    with c_p2:
+        st.markdown("##### 🏛️ Resumen por Centro Regional (ZCBC)")
+        df_ce_show = stats["df_centros_tiempos"].rename(
+            columns={
+                "centro": "Centro Regional",
+                "Homologaciones": "Total",
+                "Internas_int": "int",
+                "Egresados_egr": "egr",
+                "Externas_ext": "ext",
+                "Prom_Actores": "Prom. Actores (d)",
+                "Prom_Admon": "Prom. Admon (d)",
+                "Prom_Total": "Prom. Total (d)",
+            }
+        )
+        st.dataframe(df_ce_show, use_container_width=True, hide_index=True)

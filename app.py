@@ -122,10 +122,10 @@ with c3:
 with c4:
     with st.container(border=True):
         st.markdown("#### 🔄 4. Homologaciones")
-        st.caption("Fase 3 (Activo - 651 acuerdos)")
+        st.caption("Fase 3 (Activo - 112 estudios ZCBC)")
         st.write(
-            "Analítica y trazabilidad de Acuerdos de Homologación 2026 por Consejo de Escuela, "
-            "Programa a Cursar, Convenio SENA, Internas UNAD y Otras IES."
+            "Seguimiento de homologaciones y tiempos de respuesta por actor (Líder, Tutor, Programa), "
+            "Centro Regional y Tipo (`int`, `egr`, `ext`) al 23 de noviembre de 2026."
         )
         if st.button("⚖️ Ver Homologaciones", use_container_width=True):
             navegar_a_modulo("4_homologaciones")

@@ -757,146 +757,171 @@ def generar_pdf_informe_homologaciones(
     homologaciones_muestra: List[Dict[str, Any]],
 ) -> bytes:
     """
-    Genera en memoria (`bytes`) el Informe Ejecutivo Consolidado de Homologaciones 2026 (ECISA - UNAD),
-    incluyendo KPIs (Internas UNAD, Convenio SENA, Otras IES), desglose por Programa a Cursar,
-    Consejo de Escuela, Institución de Origen, Centro Regional y listado de acuerdos.
+    Genera en memoria (`bytes`) el Informe Ejecutivo de Seguimiento y Tiempos de Homologación 2026
+    (ECISA - Zona Centro Bogotá Cundinamarca, 01/01/2026 al 23/11/2026), con desglose de tiempos por actor
+    (Líder Nacional de Homologación, Tutor Encargado, Líder Nacional de Programa), Programa, Centro y Tipo.
     """
     pdf = ReporteAcademicoPDF(
-        titulo_reporte="INFORME EJECUTIVO DE HOMOLOGACIONES ACADEMICAS 2026 (ECISA - UNAD)",
-        subtitulo_reporte="Consolidado de Acuerdos de Consejo de Escuela (Internas UNAD, Convenio SENA y Otras IES)",
+        titulo_reporte="INFORME DE SEGUIMIENTO Y TIEMPOS DE HOMOLOGACION 2026 (ECISA - ZCBC)",
+        subtitulo_reporte="Corte: 01/01/2026 al 23/11/2026 | Tiempos por Actor, Programa, Centro Regional y Tipo (int / egr / ext)",
     )
     pdf.alias_nb_pages()
     pdf.add_page()
 
     total_hom = max(int(stats.get("total_homologaciones", 0)), 0)
     est_unicos = int(stats.get("estudiantes_unicos", 0))
-    internas = int(stats.get("total_internas", 0))
-    externas = int(stats.get("total_externas", 0))
-    sena_cnt = int(stats.get("total_sena", 0))
-    otras_ies = int(stats.get("total_otras_ies", 0))
-    consejos_cnt = int(stats.get("total_consejos", 0))
-    ac_gen = int(stats.get("total_acuerdos_generales", 0))
+    tot_int = int(stats.get("total_int", 0))
+    tot_egr = int(stats.get("total_egr", 0))
+    tot_ext = int(stats.get("total_ext", 0))
+    t_tot = float(stats.get("promedio_tiempo_total", 0.0))
+    t_dias = float(stats.get("promedio_dias_calendario", 0.0))
+    t_act = float(stats.get("promedio_tiempo_actores", 0.0))
+    t_adm = float(stats.get("promedio_tiempo_admon", 0.0))
+    t_env = float(stats.get("promedio_tiempo_envio", 0.0))
+    t_lh = float(stats.get("promedio_lider_hom", 0.0))
+    t_tut = float(stats.get("promedio_tutor", 0.0))
+    t_lp = float(stats.get("promedio_lider_prog", 0.0))
 
-    # 1. KPIs Globales
-    pdf.seccion_titulo("1. Resumen Ejecutivo de Homologaciones 2026 (Corte Noviembre 2026)")
+    # 1. KPIs Globales de Volumen y Tiempos
+    pdf.seccion_titulo("1. Indicadores Clave de Volumen y Tiempos Promedio (01/01/2026 - 23/11/2026)")
     pdf.set_text_color(30, 41, 59)
     kpis = [
-        ("Total Acuerdos de Homologacion Estudiantil:", f"{total_hom:,}".replace(",", ".")),
-        ("Total Estudiantes Beneficiados (Unicos):", f"{est_unicos:,}".replace(",", ".")),
+        ("Total Estudios de Homologacion (ZCBC - ECISA):", f"{total_hom:,} ({est_unicos:,} estudiantes unicos)".replace(",", ".")),
         (
-            "Homologaciones Internas (UNAD):",
-            f"{internas:,} ({(internas / total_hom * 100):.1f}%)".replace(",", ".") if total_hom else "0",
+            "Distribucion por Tipo de Homologacion:",
+            f"Internas (int): {tot_int} | Egresados/Convenio (egr): {tot_egr} | Externas (ext): {tot_ext}",
         ),
-        (
-            "Homologaciones Externas - Convenio SENA:",
-            f"{sena_cnt:,} ({(sena_cnt / total_hom * 100):.1f}%)".replace(",", ".") if total_hom else "0",
-        ),
-        (
-            "Homologaciones Externas - Otras Universidades / IES:",
-            f"{otras_ies:,} ({(otras_ies / total_hom * 100):.1f}%)".replace(",", ".") if total_hom else "0",
-        ),
-        ("Sesiones de Consejo de Escuela / Acuerdos Normativos:", f"{consejos_cnt} Consejos | {ac_gen} Acuerdos Generales"),
+        ("Tiempo Total Promedio del Estudio:", f"{t_tot:.1f} dias habiles ({t_dias:.1f} dias calendario)"),
+        ("Desglose Promedio Etapa vs Administracion:", f"Actores: {t_act:.1f} dias | Administracion: {t_adm:.1f} dias | Envio: {t_env:.1f} dias"),
+        ("Tiempos Promedio por Rol / Actor:", f"Lider Homolog.: {t_lh:.1f} d | Tutor Encargado: {t_tut:.1f} d | Lider Programa: {t_lp:.1f} d"),
     ]
     for k, v in kpis:
         pdf.set_font("Helvetica", "B", 8.5)
-        pdf.cell(92, 5.5, _texto_latin1(k))
+        pdf.cell(82, 5.5, _texto_latin1(k))
         pdf.set_font("Helvetica", "", 8.5)
         pdf.cell(0, 5.5, _texto_latin1(v), new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(3)
 
-    # 2. Distribución por Programa a Cursar en ECISA
-    por_prog: Dict[str, int] = stats.get("por_programa_destino", {})
-    if por_prog:
-        pdf.seccion_titulo("2. Homologaciones por Programa a Cursar en ECISA (Destino)")
+    # 2. Tabla por Programa Académico y Tiempos Promedio
+    df_prog_t = stats.get("df_programas_tiempos")
+    if df_prog_t is not None and not df_prog_t.empty:
+        pdf.seccion_titulo("2. Homologaciones y Tiempos Promedio por Programa Academico (ECISA)")
         pdf.set_fill_color(0, 75, 135)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.cell(120, 6.5, _texto_latin1("Programa Academico a Cursar (Destino)"), border=1, fill=True)
-        pdf.cell(35, 6.5, _texto_latin1("Acuerdos"), border=1, align="C", fill=True)
-        pdf.cell(35, 6.5, _texto_latin1("Participacion"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
+        pdf.set_font("Helvetica", "B", 7.5)
+        pdf.cell(92, 6.5, _texto_latin1("Programa Academico"), border=1, fill=True)
+        pdf.cell(18, 6.5, _texto_latin1("Total"), border=1, align="C", fill=True)
+        pdf.cell(26, 6.5, _texto_latin1("int / egr / ext"), border=1, align="C", fill=True)
+        pdf.cell(27, 6.5, _texto_latin1("T. Actores (d)"), border=1, align="C", fill=True)
+        pdf.cell(27, 6.5, _texto_latin1("T. Total (d)"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
 
         pdf.set_text_color(30, 41, 59)
-        pdf.set_font("Helvetica", "", 8)
-        for prog, cant in sorted(por_prog.items(), key=lambda x: x[1], reverse=True):
-            pct = (cant / total_hom * 100.0) if total_hom else 0.0
-            pdf.cell(120, 6, _texto_latin1(prog)[:68], border=1)
-            pdf.cell(35, 6, str(cant), border=1, align="C")
-            pdf.cell(35, 6, f"{pct:.1f}%", border=1, align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 7.5)
+        for _, r in df_prog_t.iterrows():
+            prog = _texto_latin1(r["programa_destino"])[:52]
+            tot_p = str(int(r["Homologaciones"]))
+            desg = f"{int(r['Internas_int'])} / {int(r['Egresados_egr'])} / {int(r['Externas_ext'])}"
+            pa = f"{float(r['Prom_Actores']):.1f} d"
+            pt = f"{float(r['Prom_Total']):.1f} d"
+
+            pdf.cell(92, 6, prog, border=1)
+            pdf.cell(18, 6, tot_p, border=1, align="C")
+            pdf.cell(26, 6, desg, border=1, align="C")
+            pdf.cell(27, 6, pa, border=1, align="C")
+            pdf.cell(27, 6, pt, border=1, align="C", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
-    # 3. Distribución por Sesión de Consejo de Escuela
-    por_consejo: Dict[str, int] = stats.get("por_consejo", {})
-    if por_consejo:
-        pdf.seccion_titulo("3. Acuerdos de Homologacion por Sesion de Consejo de Escuela")
+    # 3. Tabla por Centro Regional (ZCBC)
+    df_cen_t = stats.get("df_centros_tiempos")
+    if df_cen_t is not None and not df_cen_t.empty:
+        pdf.seccion_titulo("3. Homologaciones y Tiempos por Centro Regional (ZCBC)")
         pdf.set_fill_color(0, 75, 135)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.cell(120, 6.5, _texto_latin1("Sesion de Consejo de Escuela"), border=1, fill=True)
-        pdf.cell(35, 6.5, _texto_latin1("Acuerdos"), border=1, align="C", fill=True)
-        pdf.cell(35, 6.5, _texto_latin1("Participacion"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
+        pdf.set_font("Helvetica", "B", 7.5)
+        pdf.cell(92, 6.5, _texto_latin1("Centro Regional"), border=1, fill=True)
+        pdf.cell(18, 6.5, _texto_latin1("Total"), border=1, align="C", fill=True)
+        pdf.cell(26, 6.5, _texto_latin1("int / egr / ext"), border=1, align="C", fill=True)
+        pdf.cell(27, 6.5, _texto_latin1("T. Actores (d)"), border=1, align="C", fill=True)
+        pdf.cell(27, 6.5, _texto_latin1("T. Total (d)"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
 
         pdf.set_text_color(30, 41, 59)
-        pdf.set_font("Helvetica", "", 8)
-        for cons, cant in sorted(por_consejo.items(), key=lambda x: x[0]):
-            pct = (cant / total_hom * 100.0) if total_hom else 0.0
-            pdf.cell(120, 6, _texto_latin1(cons)[:68], border=1)
-            pdf.cell(35, 6, str(cant), border=1, align="C")
-            pdf.cell(35, 6, f"{pct:.1f}%", border=1, align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 7.5)
+        for _, r in df_cen_t.iterrows():
+            cen = _texto_latin1(r["centro"])[:52]
+            tot_c = str(int(r["Homologaciones"]))
+            desg = f"{int(r['Internas_int'])} / {int(r['Egresados_egr'])} / {int(r['Externas_ext'])}"
+            pa = f"{float(r['Prom_Actores']):.1f} d"
+            pt = f"{float(r['Prom_Total']):.1f} d"
+
+            pdf.cell(92, 6, cen, border=1)
+            pdf.cell(18, 6, tot_c, border=1, align="C")
+            pdf.cell(26, 6, desg, border=1, align="C")
+            pdf.cell(27, 6, pa, border=1, align="C")
+            pdf.cell(27, 6, pt, border=1, align="C", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
-    # 4. Top Instituciones de Origen y Centros Regionales
-    por_univ: Dict[str, int] = stats.get("por_institucion_origen", {})
-    if por_univ:
-        pdf.seccion_titulo("4. Principales Universidades / Instituciones de Origen (Top 12)")
+    # 4. Desempeño de Tutores Encargados y Líderes de Programa
+    df_tut = stats.get("df_tutores")
+    if df_tut is not None and not df_tut.empty:
+        pdf.seccion_titulo("4. Gestion y Tiempos de Respuesta por Tutor Encargado")
         pdf.set_fill_color(0, 75, 135)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.cell(120, 6.5, _texto_latin1("Universidad / Institucion de Origen"), border=1, fill=True)
-        pdf.cell(35, 6.5, _texto_latin1("Acuerdos"), border=1, align="C", fill=True)
-        pdf.cell(35, 6.5, _texto_latin1("Participacion"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
+        pdf.set_font("Helvetica", "B", 7.5)
+        pdf.cell(92, 6.5, _texto_latin1("Nombre del Tutor Encargado"), border=1, fill=True)
+        pdf.cell(32, 6.5, _texto_latin1("Estudios Asignados"), border=1, align="C", fill=True)
+        pdf.cell(33, 6.5, _texto_latin1("Prom. Dias Tutor"), border=1, align="C", fill=True)
+        pdf.cell(33, 6.5, _texto_latin1("Prom. Tiempo Total"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
 
         pdf.set_text_color(30, 41, 59)
-        pdf.set_font("Helvetica", "", 8)
-        for univ, cant in sorted(por_univ.items(), key=lambda x: x[1], reverse=True)[:12]:
-            pct = (cant / total_hom * 100.0) if total_hom else 0.0
-            pdf.cell(120, 5.8, _texto_latin1(univ)[:68], border=1)
-            pdf.cell(35, 5.8, str(cant), border=1, align="C")
-            pdf.cell(35, 5.8, f"{pct:.1f}%", border=1, align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 7.5)
+        for _, r in df_tut.iterrows():
+            tnom = _texto_latin1(r["tutor_nombre"])[:52]
+            tcant = str(int(r["Homologaciones"]))
+            tprom = f"{float(r['Promedio_Dias_Tutor']):.1f} dias"
+            ttot = f"{float(r['Promedio_Tiempo_Total']):.1f} dias"
+
+            pdf.cell(92, 5.8, tnom, border=1)
+            pdf.cell(32, 5.8, tcant, border=1, align="C")
+            pdf.cell(33, 5.8, tprom, border=1, align="C")
+            pdf.cell(33, 5.8, ttot, border=1, align="C", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
-    # 5. Muestra detallada de Acuerdos de Homologación en la consulta
+    # 5. Listado Detallado de Estudios de Homologación
     if homologaciones_muestra:
         pdf.add_page()
         pdf.seccion_titulo(
-            f"5. Listado de Acuerdos de Homologacion en la Consulta ({min(len(homologaciones_muestra), 100)} de {len(homologaciones_muestra)})"
+            f"5. Detalle de Estudios de Homologacion ({len(homologaciones_muestra)} registros)"
         )
         pdf.set_fill_color(0, 75, 135)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 7)
-        pdf.cell(28, 6.5, _texto_latin1("Acuerdo"), border=1, fill=True)
+        pdf.set_font("Helvetica", "B", 6.8)
+        pdf.cell(14, 6.5, _texto_latin1("ID Hom."), border=1, align="C", fill=True)
         pdf.cell(20, 6.5, _texto_latin1("Documento"), border=1, fill=True)
-        pdf.cell(42, 6.5, _texto_latin1("Nombre Estudiante"), border=1, fill=True)
-        pdf.cell(46, 6.5, _texto_latin1("Programa a Cursar"), border=1, fill=True)
-        pdf.cell(38, 6.5, _texto_latin1("Institucion Origen"), border=1, fill=True)
-        pdf.cell(16, 6.5, _texto_latin1("Tipo"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
+        pdf.cell(42, 6.5, _texto_latin1("Estudiante"), border=1, fill=True)
+        pdf.cell(44, 6.5, _texto_latin1("Programa"), border=1, fill=True)
+        pdf.cell(38, 6.5, _texto_latin1("Tutor Encargado"), border=1, fill=True)
+        pdf.cell(12, 6.5, _texto_latin1("Tipo"), border=1, align="C", fill=True)
+        pdf.cell(20, 6.5, _texto_latin1("T.Total/Dias"), border=1, align="C", new_x="LMARGIN", new_y="NEXT", fill=True)
 
         pdf.set_text_color(30, 41, 59)
-        pdf.set_font("Helvetica", "", 6.5)
-        for h in homologaciones_muestra[:100]:
-            ac_short = _texto_latin1(str(h.get("acuerdo", "-")).replace("ACUERDO NÚMERO ", "Ac. ").replace(" DEL ", " "))[:18]
+        pdf.set_font("Helvetica", "", 6.3)
+        for h in homologaciones_muestra[:115]:
+            id_h = _texto_latin1(h.get("id_homologacion", "-"))[:9]
             doc_num = _texto_latin1(h.get("documento_estudiante", "-"))[:13]
             nom = _texto_latin1(h.get("nombre_estudiante", "-"))[:26]
-            prog_d = _texto_latin1(h.get("programa_destino", "-"))[:29]
-            inst_o = _texto_latin1(h.get("institucion_origen", "-"))[:24]
-            tip = _texto_latin1(h.get("tipo", "-"))[:10]
+            prog_d = _texto_latin1(h.get("programa_destino", "-"))[:27]
+            tut = _texto_latin1(h.get("tutor_nombre", "-"))[:24]
+            tip = _texto_latin1(h.get("tipo_codigo", "-")).upper()[:6]
+            tiempos = _texto_latin1(f"{h.get('tiempo_total', 0)}d / {h.get('dias_calendario', 0)}d")
 
-            pdf.cell(28, 5.8, ac_short, border=1)
-            pdf.cell(20, 5.8, doc_num, border=1)
-            pdf.cell(42, 5.8, nom, border=1)
-            pdf.cell(46, 5.8, prog_d, border=1)
-            pdf.cell(38, 5.8, inst_o, border=1)
-            pdf.cell(16, 5.8, tip, border=1, align="C", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(14, 5.6, id_h, border=1, align="C")
+            pdf.cell(20, 5.6, doc_num, border=1)
+            pdf.cell(42, 5.6, nom, border=1)
+            pdf.cell(44, 5.6, prog_d, border=1)
+            pdf.cell(38, 5.6, tut, border=1)
+            pdf.cell(12, 5.6, tip, border=1, align="C")
+            pdf.cell(20, 5.6, tiempos, border=1, align="C", new_x="LMARGIN", new_y="NEXT")
 
     buffer = BytesIO()
     pdf.output(buffer)
