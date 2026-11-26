@@ -327,6 +327,10 @@ def renderizar_barra_sesion_y_login(modulo_actual: Optional[str] = None) -> bool
 
     mod_raiz = _detectar_modulo_script_principal()
     mod_este_archivo = modulo_actual or mod_raiz
+    # Si estamos en el script raíz real de Streamlit, nunca estamos en delegación
+    # (previene que un st.stop() o st.rerun() dentro de una página delegada deje pegado el flag)
+    if mod_este_archivo == mod_raiz:
+        st.session_state["_ejecutando_delegacion_modulo"] = False
     en_delegacion = bool(st.session_state.get("_ejecutando_delegacion_modulo"))
 
     # Siempre iniciar por defecto en el Portal Principal ("inicio") al abrir la aplicación por primera vez
@@ -455,11 +459,12 @@ def renderizar_barra_sesion_y_login(modulo_actual: Optional[str] = None) -> bool
             _, _, ruta_destino = MAPA_MODULOS_SISTEMA[mod_destino]
             if ruta_destino.exists():
                 orig_set_page_config = st.set_page_config
+                st.set_page_config = lambda *a, **kw: None
+                st.session_state["_ejecutando_delegacion_modulo"] = True
                 try:
-                    st.set_page_config = lambda *a, **kw: None
-                    st.session_state["_ejecutando_delegacion_modulo"] = True
                     runpy.run_path(str(ruta_destino), run_name="__main__")
                 finally:
+                    # SIEMPRE limpiar la bandera incluso si la página delegada llamó a st.stop() o st.rerun()
                     st.set_page_config = orig_set_page_config
                     st.session_state["_ejecutando_delegacion_modulo"] = False
                 st.stop()
